@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0d10">
+<title>FPV Sperrzonen-Cockpit</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<!-- iOS kennt das Manifest nur teilweise: Vollbild, Statusleiste und Symbol
+     brauchen bis heute die eigenen Meta-Tags. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cockpit">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="stylesheet" href="./vendor/maplibre-gl/maplibre-gl.css">
+<link rel="stylesheet" href="./styles/app.css">
+</head>
+<body>
+<div id="map"></div>
+
+<button id="hud-toggle" class="panel-toggle panel-toggle-top" aria-expanded="false" aria-controls="hud"
+        aria-label="Positionsdaten einblenden" title="Positionsdaten einblenden">
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+    <path d="M5 3 L11 8 L5 13" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+</button>
+<div id="hud" class="hud" hidden>
+  <div class="hud-row"><span class="hud-label">Status</span><span id="hud-status" class="hud-value">Karte startet …</span></div>
+  <div class="hud-row"><span class="hud-label">Position</span><span id="hud-position" class="hud-value">–</span></div>
+  <div class="hud-row"><span class="hud-label">Tempo</span><span id="hud-speed" class="hud-value">–</span></div>
+  <div class="hud-row"><span class="hud-label">Kurs</span><span id="hud-heading" class="hud-value">–</span></div>
+  <div class="hud-row"><span class="hud-label">Kompass</span><span id="hud-compass" class="hud-value">–</span></div>
+  <div class="hud-row"><span class="hud-label">Neigung</span><span id="hud-tilt" class="hud-value">–</span></div>
+  <div class="hud-row"><span class="hud-label">Kamera</span><span id="hud-camera" class="hud-value">–</span></div>
+</div>
+
+<div id="controls" class="controls">
+  <div id="layers-panel" class="layers-panel" hidden></div>
+  <button id="fullscreen" class="fullscreen" hidden aria-pressed="false"
+          aria-label="Vollbild einschalten" title="Vollbild einschalten">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <button id="recenter" class="recenter" hidden aria-label="Zurück auf die eigene Position" title="Zurück auf die eigene Position">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+      <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+      <path d="M12 1v3M12 20v3M1 12h3M20 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button id="compass" class="compass" hidden aria-label="Karte nach Norden ausrichten" title="Karte nach Norden ausrichten">
+    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.55"/>
+      <path d="M12 3.5 L15 12 L12 10.5 Z" fill="#e8503a"/>
+      <path d="M12 20.5 L9 12 L12 13.5 Z" fill="currentColor"/>
+    </svg>
+  </button>
+  <button id="layers-toggle" class="layers-toggle" aria-expanded="false">Layer</button>
+  <div id="modes" class="modes" hidden>
+    <button id="mode-tracking" class="mode-button" aria-pressed="true">Tracking</button>
+    <button id="mode-manual" class="mode-button" aria-pressed="false">Manuell</button>
+  </div>
+</div>
+
+<div id="info" class="info-panel" hidden>
+  <button id="info-close" class="info-close" aria-label="Info schliessen">✕</button>
+  <div id="info-body" class="info-body"></div>
+</div>
+
+<button id="anchor-toggle" class="panel-toggle panel-toggle-bottom" hidden aria-expanded="false"
+        aria-controls="anchor-control" aria-label="Kameralage einblenden" title="Kameralage einblenden">
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+    <path d="M5 3 L11 8 L5 13" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+</button>
+<div id="anchor-control" class="anchor-control" hidden>
+  <div class="camera-row">
+    <span class="anchor-label">Vor</span>
+    <input id="anchor" class="anchor-range" type="range" min="0" max="100" step="1" value="85"
+           aria-label="Kameralage vorwärts: Übersicht bis auf den eigenen Standort">
+    <span id="anchor-value" class="anchor-value">85 %</span>
+  </div>
+  <div class="camera-row">
+    <span class="anchor-label">Höhe</span>
+    <input id="height" class="anchor-range" type="range" min="0" max="100" step="1" value="50"
+           aria-label="Kamerahöhe über dem eigenen Standort">
+    <span id="height-value" class="anchor-value">– m</span>
+  </div>
+</div>
+
+<div id="banner" class="banner" hidden></div>
+
+<div id="start" class="start-overlay">
+  <div class="start-card">
+    <h1>FPV Sperrzonen-Cockpit</h1>
+    <p>Für die Live-Ansicht braucht die App Standort und Kompass. Den Kompass gibt iOS erst nach einem Tap frei.</p>
+    <p id="start-disclaimer" class="start-disclaimer"></p>
+    <button id="start-button" class="start-button">Cockpit starten</button>
+    <p id="start-hint" class="start-hint"></p>
+    <p id="install-hint" class="install-hint" hidden></p>
+  </div>
+</div>
+
+<div id="disclaimer" class="disclaimer-fixed"></div>
+<div id="attribution" class="attribution-fixed"></div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
