@@ -2,8 +2,9 @@
 
 Live nachgeführte 3D-Kartenansicht der Schweiz mit Drohnen-relevanten Sperr- und
 Hinweisflächen. Läuft während der Fahrt auf dem iPhone oder iPad: die Karte folgt
-Position und Blickrichtung, das Gelände ist echtes swisstopo-Terrain, und die
-Kamera kippt mit dem Gerät.
+Position und Blickrichtung auf echtem swisstopo-Terrain. Neigung und Zoom der
+Kamera stehen fest und folgen bewusst nicht der Gerätelage — sonst wackelt die
+Ansicht in der Fahrzeughalterung mit.
 
 **→ [maetthum.github.io/Drone-Cockpit](https://maetthum.github.io/Drone-Cockpit/)**
 
@@ -15,27 +16,30 @@ Kamera kippt mit dem Gerät.
 > allein die amtlichen Angaben von BAZL und Kantonen sowie die geltenden
 > Vorschriften. Die Verantwortung für jeden Flug liegt bei der steuernden Person.
 
-## Was es tut
+## Funktionen
 
-- **3D-Gelände** von swisstopo (Quantized-Mesh), Luftbild als Untergrund, echter Himmel statt Hintergrundfarbe.
+- **3D-Kartenansicht** mit echtem swisstopo-Gelände, live geführt von GPS-Position und Blickrichtung
+- **Sperr- und Hinweisflächen** als Overlay, einzeln schaltbar — BAZL, BAFU, VBS, BFE
+- **Luftfahrthindernisse** als Vektor, eingefärbt nach Höhe über Grund
+- **Antippen** zeigt die geltenden Vorschriften im Klartext, samt Höhenband und zuständiger Stelle
+- **Luftlinienmessung** per Rechtsklick/Long-Press — beliebig viele Punkte, Distanz und Höhenmeter direkt auf der Karte
+- **Tastatursteuerung am Mac** wie bei Google Maps: Pfeiltasten verschieben, Shift+Pfeil dreht/neigt, +/− zoomt
+- **Installierbar und offline-fähig** als PWA — App-Hülle im Cache, gefahrene Strecken bleiben im Funkloch verfügbar
+
+## Wie es funktioniert
+
 - **Folgt live** der GPS-Position. Die Blickrichtung kommt in Fahrt aus dem GPS-Bewegungsvektor, im Stillstand aus dem Magnetometer — mit Hysterese, damit die Quelle im Schritttempo nicht flattert, und mit Überblendung, damit der Wechsel nicht als Sprung sichtbar wird.
 - **Fast waagrechter Blick nach vorn**, nicht von oben herab — so sieht man, was vor einem liegt. Neigung und Zoom stehen im Tracking fest und ändern sich nur auf Fingergeste; die Lage des Geräts spielt bewusst keine Rolle, sonst wackelt die Ansicht in der Halterung mit.
 - **Zwei Regler für die Kamera**: „Vor" schiebt den eigenen Punkt im Bild nach unten, bis die Kamera praktisch auf ihm steht; „Höhe" setzt die Kamerahöhe in Metern über dem eigenen Standort.
 - **Die Kamera bleibt über Grund.** Bei fast waagrechtem Blick sitzt sie knapp über dem Boden und rutschte sonst in ansteigendes Gelände — man sieht den Berg dann von innen. Reicht die Bodenfreiheit nicht, nimmt die App die Neigung so weit zurück, bis sie wieder passt.
-- **Sperr- und Hinweisflächen** als Overlay, einzeln schaltbar (siehe Datenquellen).
-- **Luftfahrthindernisse als Vektor**, eingefärbt nach Höhe über Grund.
-- **Antippen beantwortet „was gilt hier?"** — die Karte zeigt Flächen, die Regel
-  steht in den Sachdaten. Ein Tipp fragt die eingeschalteten Layer am Ort ab und
-  zeigt den Klartext, etwa „Der Betrieb von unbemannten Luftfahrzeugen mit einem
-  Gewicht von mehr als 250 g ist ab einer Höhe von 120 m über Grund verboten",
-  samt Höhenband und zuständiger Stelle.
-- **Luftlinienmessung**: Rechtsklick (Desktop) oder Long-Press (Touch) öffnet ein
-  Menü zum Punktsetzen — beliebig viele Punkte, jede Strecke zeigt Distanz und
-  Höhenunterschied direkt auf der Karte.
-- **Installierbar und offline startfähig**: zum Home-Bildschirm hinzufügen, dann
-  läuft sie im Vollbild. Die App-Hülle liegt im Cache, Kartenkacheln sammeln sich
-  im Betrieb — eine einmal gefahrene Strecke ist im Funkloch wieder da.
-- Kein Backend, kein Build-Schritt, keine Toolchain: statische Dateien, die GitHub Pages unverändert ausliefert.
+- **Antippen** fragt die eingeschalteten Layer am Ort ab und zeigt den Klartext,
+  etwa „Der Betrieb von unbemannten Luftfahrzeugen mit einem Gewicht von mehr als
+  250 g ist ab einer Höhe von 120 m über Grund verboten", samt Höhenband und
+  zuständiger Stelle.
+- **App-Hülle im Cache, Kartenkacheln sammeln sich im Betrieb** — eine einmal
+  gefahrene Strecke ist im Funkloch wieder da.
+
+![Antippen zeigt eine Sperrzone im Klartext, während im Hintergrund eine Luftlinienmessung mit Distanz und Höhenmeter steht](docs/screenshot-info-messung.jpg)
 
 ## Bedienung
 
@@ -58,6 +62,8 @@ Zwei Modi:
 | „Zu mir" | Zurück auf die eigene Position, ohne den Modus zu wechseln |
 | „Layer" | Overlays einzeln ein- und ausschalten |
 
+![Luftlinienmessung im Talkessel: zwei Punkte, gestrichelte Linie, Distanz und Höhenmeter am Mittelpunkt](docs/screenshot-messung.jpg)
+
 Die eigene Position zeigt ein blauer Pfeil in Fahrtrichtung. Er steht aufrecht
 zum Bildschirm — flach auf das Gelände gelegt läge er bei fast waagrechtem Blick
 in der Blickachse und wäre kaum zu sehen. Ist kein Kurs bekannt, erscheint statt
@@ -66,6 +72,10 @@ des Pfeils ein Punkt: eine gezeichnete Richtung ohne Datengrundlage wäre geloge
 HUD und Kameralage starten eingeklappt; je ein kleines Eck am linken Rand blendet
 sie ein. Im Manuell-Modus kommen „Zu mir" und ein Kompass dazu, der die Karte
 nach Norden ausrichtet.
+
+**Am Mac** (Maus/Trackpad, Manuell-Modus, Karte muss zuerst angeklickt sein):
+Pfeiltasten verschieben, Shift+←/→ dreht, Shift+↑/↓ neigt, +/− zoomt — dieselben
+Tasten wie bei Google Maps.
 
 ## Datenquellen
 
@@ -87,7 +97,10 @@ Quellenangabe verpflichtend (opendata.swiss `terms_by`).
 | Hindernisbegrenzungsflächen | BAZL | WMS | aus |
 | Moorlandschaften, Auen, BLN, Waldreservate | BAFU | WMTS | aus |
 | Gewässer (kant. Regeln) | swisstopo | WMTS | aus |
+| Ortsnamen | swisstopo | WMTS | an |
 | Niederschlagsradar | RainViewer | XYZ-Kacheln | aus |
+
+![Layer-Panel mit allen Overlays, einzeln schaltbar](docs/screenshot-layer.jpg)
 
 **Bewusst nicht enthalten** sind Layer, welche die BAZL-Drohnenkarte bereits
 selbst führt. Sie ist eine Sammelkarte mit drei Kategorien — `NATURE`,
