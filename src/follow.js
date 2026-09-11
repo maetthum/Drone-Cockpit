@@ -272,18 +272,42 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
      * wohin man sich bewegt, nicht wohin das Gerät zeigt. Im Stand und im
      * Schritttempo ist der GPS-Kurs unbrauchbar, dort wird nicht vorhergesagt —
      * dann gibt es auch nichts zu überbrücken.
+     *
+     * **Kreisbahn statt Gerade.** Bei einer langen Kurve bleibt `fahrtKurs` bis
+     * zum nächsten Fix auf dem Wert des letzten — eine Gerade tangential zur
+     * Kurve. Bei bis zu zwei Sekunden Vorhersage (`koppelMaxSeconds`) schneidet
+     * das die Kurve merklich, bis der nächste Fix den Sprung wieder ausbügelt:
+     * genau das ruckelige Bild in einer langgezogenen Kurve. Die Drehrate des
+     * Kompasses (`drehrate`) — unabhängig von der Quellwahl der Kamera immer
+     * live, weil `pushCompassHeading` unbedingt läuft — liefert die Krümmung;
+     * Weg und Kurs werden mit konstanter Drehrate über die Zeit integriert,
+     * geschlossen lösbar (Kreisbahn). Dasselbe Totband wie beim Vorhalt
+     * (`kompassVorhalteTotDegrees`) gegen Magnetometerrauschen auf echt
+     * geraden Strecken — ungeprüft am Gerät, ob der Wert auch hier passt.
      */
     function koppelZiel(now) {
         if (target === null) return null;
         if (fahrtKurs === null || fahrtTempo < FOLLOW.gpsHeadingMinSpeedMps) return target;
         const sekunden = Math.min((now - letzterFixZeit) / 1000, FOLLOW.koppelMaxSeconds);
         if (!(sekunden > 0)) return target;
-        const strecke = fahrtTempo * sekunden;
         const rad = Math.PI / 180;
-        const kurs = fahrtKurs * rad;
+        const kurs0 = fahrtKurs * rad;
+        const omega = Math.sign(drehrate)
+            * Math.max(0, Math.abs(drehrate) - FOLLOW.kompassVorhalteTotDegrees) * rad;
+        let ost;
+        let nord;
+        if (omega === 0) {
+            const strecke = fahrtTempo * sekunden;
+            ost = strecke * Math.sin(kurs0);
+            nord = strecke * Math.cos(kurs0);
+        } else {
+            const radius = fahrtTempo / omega;
+            ost = radius * (Math.cos(kurs0) - Math.cos(kurs0 + omega * sekunden));
+            nord = radius * (Math.sin(kurs0 + omega * sekunden) - Math.sin(kurs0));
+        }
         return {
-            lng: target.lng + (strecke * Math.sin(kurs)) / (111320 * Math.cos(target.lat * rad)),
-            lat: target.lat + (strecke * Math.cos(kurs)) / 110540
+            lng: target.lng + ost / (111320 * Math.cos(target.lat * rad)),
+            lat: target.lat + nord / 110540
         };
     }
 
