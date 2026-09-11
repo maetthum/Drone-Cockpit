@@ -91,6 +91,7 @@ Quellenangabe verpflichtend (opendata.swiss `terms_by`).
 | UAS-Aktivitätszonen | BAZL | WMS | an |
 | Schiessanzeigen + Gefahrenzonen | VBS | WMTS | an |
 | Seilbahnen (swissTLM3D) | swisstopo | WMTS | an |
+| Wander-/Alpinwanderwege | swisstopo | WMTS | an |
 | Hochspannung >36 kV | BFE | WMS | an |
 | Luftfahrthindernisse | BAZL | GeoJSON (identify) | an |
 | Windenergieanlagen | BFE | WMS | aus |

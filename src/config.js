@@ -692,6 +692,12 @@ export const OVERLAYS = [
     // Linien statt Flächen — bei der flächigen Deckkraft wären sie kaum zu sehen.
     {id: 'seilbahnen', label: 'Seilbahnen', layer: 'ch.swisstopo.swisstlm3d-uebrigerverkehr', service: 'wmts', enabled: true, opacity: 0.9},
     /*
+     * Signalisierte Routen (Wanderweg/Bergwanderweg/Alpinwanderweg als
+     * Sachdatum `hikingtype`, siehe api3) — wo mit Personen zu rechnen ist.
+     * Kachel angesehen: nur Linien auf transparentem Grund, kein „-karte".
+     */
+    {id: 'wanderwege', label: 'Wander-/Alpinwanderwege', layer: 'ch.swisstopo.swisstlm3d-wanderwege', service: 'wmts', enabled: true, opacity: 0.9},
+    /*
      * Echte Leitungsgeometrie (Leitungen, Unterwerke, Trafostationen) statt der
      * Sachplan-Korridore. Laut Legende haben noch nicht alle Netzbetreiber
      * geliefert — Ergänzung, kein Ersatz für die Sichtprüfung. Unter 36 kV
