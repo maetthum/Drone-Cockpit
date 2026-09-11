@@ -211,8 +211,18 @@ function updateHud(map, follow) {
 }
 
 /**
+ * Reihenfolge der Gruppen im Layer-Panel — von den Sperrzonen (was das Fliegen
+ * einschränkt) über Kontext bis zu den seltener gebrauchten Layern. Ein
+ * `group`-Wert, der hier fehlt, verschwindet stillschweigend aus dem Panel
+ * (siehe `buildLayerPanel`), deshalb: neue Gruppe immer auch hier eintragen.
+ */
+const LAYER_GROUP_ORDER = ['Sperrzonen', 'Infrastruktur', 'Wege & Routen', 'Naturschutz', 'Weiteres'];
+
+/**
  * Baut das Layer-Panel aus der Konfiguration — die Liste steht nur in
- * config.js, nicht zusätzlich im Markup.
+ * config.js, nicht zusätzlich im Markup. Nach `group` gruppiert (siehe
+ * LAYER_GROUP_ORDER), weil die Liste inzwischen zu lang für eine einzige
+ * Spalte ohne Orientierung ist.
  */
 function buildLayerPanel(overlays, obstacles, radar) {
     const labels = new Map();
@@ -225,21 +235,31 @@ function buildLayerPanel(overlays, obstacles, radar) {
         {...RADAR, toggle: (on) => radar.setVisible(on)}
     ];
 
-    rows.forEach((overlay) => {
-        const row = document.createElement('label');
-        row.className = 'layer-row';
+    LAYER_GROUP_ORDER.forEach((groupName) => {
+        const groupRows = rows.filter((overlay) => overlay.group === groupName);
+        if (groupRows.length === 0) return;
 
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = overlay.enabled;
-        checkbox.addEventListener('change', () => overlay.toggle(checkbox.checked));
+        const heading = document.createElement('div');
+        heading.className = 'layer-group';
+        heading.textContent = groupName;
+        els.layersPanel.append(heading);
 
-        const text = document.createElement('span');
-        text.textContent = overlay.label;
+        groupRows.forEach((overlay) => {
+            const row = document.createElement('label');
+            row.className = 'layer-row';
 
-        row.append(checkbox, text);
-        els.layersPanel.append(row);
-        labels.set(overlay.id, text);
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = overlay.enabled;
+            checkbox.addEventListener('change', () => overlay.toggle(checkbox.checked));
+
+            const text = document.createElement('span');
+            text.textContent = overlay.label;
+
+            row.append(checkbox, text);
+            els.layersPanel.append(row);
+            labels.set(overlay.id, text);
+        });
     });
 
     els.layersToggle.addEventListener('click', () => {

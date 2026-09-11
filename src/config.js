@@ -663,7 +663,7 @@ export const FOLLOW = {
  */
 export const OVERLAYS = [
     // Die massgebliche Drohnenkarte des BAZL — steht bewusst zuoberst im Panel.
-    {id: 'drohnen', label: 'Einschränkungen für Drohnen', layer: 'ch.bazl.einschraenkungen-drohnen', service: 'wmts', enabled: true},
+    {id: 'drohnen', label: 'Einschränkungen für Drohnen', group: 'Sperrzonen', layer: 'ch.bazl.einschraenkungen-drohnen', service: 'wmts', enabled: true},
     /*
      * Wildruhezonen sind die eine Naturschutzkategorie, die die BAZL-Karte
      * **nicht** führt: sie sind kantonal. Am Trüebsee nachgemessen — der
@@ -671,12 +671,12 @@ export const OVERLAYS = [
      * keine. Deshalb bleibt er, während Jagdbanngebiete, Nationalpark,
      * Vogelreservate und Pro-Natura-Gebiete entfernt wurden (siehe unten).
      */
-    {id: 'wildruhezonen', label: 'Wildruhezonen', layer: 'ch.bafu.wrz-wildruhezonen_portal', service: 'wmts', enabled: true},
+    {id: 'wildruhezonen', label: 'Wildruhezonen', group: 'Sperrzonen', layer: 'ch.bafu.wrz-wildruhezonen_portal', service: 'wmts', enabled: true},
     // Wo andere Drohnen unterwegs sind: genehmigte BVLOS-Flüge. Kein Verbot,
     // sondern Verkehr — und damit das, was die Verbotskarte nicht zeigt.
-    {id: 'uas-aktivitaet', label: 'UAS-Aktivitätszonen', layer: 'ch.bazl.uas-aktivitaetszonen', service: 'wms', enabled: true},
+    {id: 'uas-aktivitaet', label: 'UAS-Aktivitätszonen', group: 'Sperrzonen', layer: 'ch.bazl.uas-aktivitaetszonen', service: 'wms', enabled: true},
     // Gefahrenzonen der Armee samt Schiesstagen und -zeiten.
-    {id: 'schiessanzeigen', label: 'Schiessanzeigen + Gefahrenzonen', layer: 'ch.vbs.schiessanzeigen', service: 'wmts', enabled: true},
+    {id: 'schiessanzeigen', label: 'Schiessanzeigen + Gefahrenzonen', group: 'Sperrzonen', layer: 'ch.vbs.schiessanzeigen', service: 'wmts', enabled: true},
     /*
      * `ch.vbs.sperr-gefahrenzonenkarte` wurde am 5.9.2026 wieder entfernt: der
      * Layer ist trotz seines Namens **kein Overlay, sondern eine vollflächige
@@ -690,20 +690,20 @@ export const OVERLAYS = [
      * HTTP-Status. Ein Layer mit „-karte" im Namen ist verdächtig.
      */
     // Linien statt Flächen — bei der flächigen Deckkraft wären sie kaum zu sehen.
-    {id: 'seilbahnen', label: 'Seilbahnen', layer: 'ch.swisstopo.swisstlm3d-uebrigerverkehr', service: 'wmts', enabled: true, opacity: 0.9},
+    {id: 'seilbahnen', label: 'Seilbahnen', group: 'Infrastruktur', layer: 'ch.swisstopo.swisstlm3d-uebrigerverkehr', service: 'wmts', enabled: true, opacity: 0.9},
     /*
      * Signalisierte Routen (Wanderweg/Bergwanderweg/Alpinwanderweg als
      * Sachdatum `hikingtype`, siehe api3) — wo mit Personen zu rechnen ist.
      * Kachel angesehen: nur Linien auf transparentem Grund, kein „-karte".
      */
-    {id: 'wanderwege', label: 'Wander-/Alpinwanderwege', layer: 'ch.swisstopo.swisstlm3d-wanderwege', service: 'wmts', enabled: true, opacity: 0.9},
+    {id: 'wanderwege', label: 'Wander-/Alpinwanderwege', group: 'Wege & Routen', layer: 'ch.swisstopo.swisstlm3d-wanderwege', service: 'wmts', enabled: true, opacity: 0.9},
     /*
      * Echte Leitungsgeometrie (Leitungen, Unterwerke, Trafostationen) statt der
      * Sachplan-Korridore. Laut Legende haben noch nicht alle Netzbetreiber
      * geliefert — Ergänzung, kein Ersatz für die Sichtprüfung. Unter 36 kV
      * erfasst der Bund gar nichts.
      */
-    {id: 'hochspannung', label: 'Hochspannung >36 kV', layer: 'ch.bfe.elektrische-anlagen_ueber_36', service: 'wms', enabled: true, opacity: 0.9},
+    {id: 'hochspannung', label: 'Hochspannung >36 kV', group: 'Infrastruktur', layer: 'ch.bfe.elektrische-anlagen_ueber_36', service: 'wms', enabled: true, opacity: 0.9},
 
     /*
      * Ab hier zuschaltbar statt vorgabemässig an. Jedes sichtbare Raster kostet
@@ -713,20 +713,30 @@ export const OVERLAYS = [
      */
     // Hohe Hindernisse mit drehendem Rotor.
     // Einzelne Anlagen, keine Fläche.
-    {id: 'windenergie', label: 'Windenergieanlagen', layer: 'ch.bfe.windenergieanlagen', service: 'wms', enabled: false, opacity: 0.9},
+    {id: 'windenergie', label: 'Windenergieanlagen', group: 'Infrastruktur', layer: 'ch.bfe.windenergieanlagen', service: 'wms', enabled: false, opacity: 0.9},
     // Flächen um Flugplätze, in denen Höhenbeschränkungen gelten. Grossflächig,
     // deshalb aus: eingeschaltet deckt es halbe Landstriche zu.
-    {id: 'hindernisflaechen', label: 'Hindernisbegrenzungsflächen', layer: 'ch.bazl.hindernisbegrenzungsflaechen-kataster', service: 'wms', enabled: false},
+    {id: 'hindernisflaechen', label: 'Hindernisbegrenzungsflächen', group: 'Infrastruktur', layer: 'ch.bazl.hindernisbegrenzungsflaechen-kataster', service: 'wms', enabled: false},
+
+    /*
+     * Weitere Routen abseits der Wanderwege — saisonal/aktivitätsgebunden,
+     * deshalb zuschaltbar statt vorgabemässig an. Je Kachel angesehen: reine
+     * Linien auf transparentem Grund.
+     */
+    {id: 'skitouren', label: 'Skitouren', group: 'Wege & Routen', layer: 'ch.swisstopo-karto.skitouren', service: 'wmts', enabled: false, opacity: 0.9},
+    {id: 'schneeschuhrouten', label: 'Schneeschuhrouten', group: 'Wege & Routen', layer: 'ch.swisstopo-karto.schneeschuhrouten', service: 'wmts', enabled: false, opacity: 0.9},
+    {id: 'winterwanderwege', label: 'Winterwanderwege', group: 'Wege & Routen', layer: 'ch.astra.winterwanderwege', service: 'wmts', enabled: false, opacity: 0.9},
+    {id: 'mountainbike', label: 'Mountainbikeland', group: 'Wege & Routen', layer: 'ch.astra.mountainbikeland', service: 'wmts', enabled: false, opacity: 0.9},
 
     /*
      * Naturschutz-Kontext. Diese vier bedeuten **kein** Drohnenverbot — sie
      * zeigen, wo Störungsverbote und kantonale Regeln greifen können. Deshalb
      * zuschaltbar und nicht vorgabemässig an.
      */
-    {id: 'moorlandschaften', label: 'Moorlandschaften', layer: 'ch.bafu.bundesinventare-moorlandschaften', service: 'wmts', enabled: false},
-    {id: 'auen', label: 'Auengebiete', layer: 'ch.bafu.bundesinventare-auen', service: 'wmts', enabled: false},
-    {id: 'bln', label: 'BLN-Landschaften', layer: 'ch.bafu.bundesinventare-bln', service: 'wmts', enabled: false},
-    {id: 'waldreservate', label: 'Waldreservate', layer: 'ch.bafu.waldreservate', service: 'wmts', enabled: false, maxzoom: 17},
+    {id: 'moorlandschaften', label: 'Moorlandschaften', group: 'Naturschutz', layer: 'ch.bafu.bundesinventare-moorlandschaften', service: 'wmts', enabled: false},
+    {id: 'auen', label: 'Auengebiete', group: 'Naturschutz', layer: 'ch.bafu.bundesinventare-auen', service: 'wmts', enabled: false},
+    {id: 'bln', label: 'BLN-Landschaften', group: 'Naturschutz', layer: 'ch.bafu.bundesinventare-bln', service: 'wmts', enabled: false},
+    {id: 'waldreservate', label: 'Waldreservate', group: 'Naturschutz', layer: 'ch.bafu.waldreservate', service: 'wmts', enabled: false, maxzoom: 17},
 
     /*
      * Gewässer sind keine Sperrzone — aber mehrere Kantone knüpfen Regeln
@@ -737,7 +747,7 @@ export const OVERLAYS = [
      * Drohnen eine Zurückhaltungspflicht. Der Layer zeigt, *wo* das gilt;
      * *was* gilt, steht im kantonalen Recht.
      */
-    {id: 'gewaesser', label: 'Gewässer (kant. Regeln)', layer: 'ch.swisstopo.swisstlm3d-gewaessernetz', service: 'wmts', enabled: false, opacity: 0.7},
+    {id: 'gewaesser', label: 'Gewässer (kant. Regeln)', group: 'Naturschutz', layer: 'ch.swisstopo.swisstlm3d-gewaessernetz', service: 'wmts', enabled: false, opacity: 0.7},
 
     /*
      * Kartografischer Kontext, keine Restriktion: das Luftbild allein zeigt
@@ -761,7 +771,7 @@ export const OVERLAYS = [
      * (`ch.swisstopo.base.vt`, Feld `rank`), aber `vectortiles.geo.admin.ch`
      * liefert kein CORS — vom Browser aus nicht nutzbar.
      */
-    {id: 'ortsnamen', label: 'Ortsnamen', layer: 'ch.swisstopo.vec200-names-namedlocation', service: 'wmts', enabled: true, queryable: false, opacity: 1, minzoom: 11}
+    {id: 'ortsnamen', label: 'Ortsnamen', group: 'Weiteres', layer: 'ch.swisstopo.vec200-names-namedlocation', service: 'wmts', enabled: true, queryable: false, opacity: 1, minzoom: 11}
 
     /*
      * ENTFERNT am 5.9.2026, weil die BAZL-Drohnenkarte sie bereits führt —
@@ -787,6 +797,7 @@ export const OVERLAYS = [
 export const OBSTACLES = {
     id: 'hindernisse',
     label: 'Luftfahrthindernisse',
+    group: 'Infrastruktur',
     enabled: true,
     identifyUrl: 'https://api3.geo.admin.ch/rest/services/all/MapServer/identify',
     layer: 'ch.bazl.luftfahrthindernis',
@@ -971,6 +982,7 @@ export const ME = {
 export const RADAR = {
     id: 'radar',
     label: 'Niederschlagsradar',
+    group: 'Weiteres',
     /** Nennt Host und die Pfade der letzten Zeitpunkte. Kein Schlüssel nötig. */
     indexUrl: 'https://api.rainviewer.com/public/weather-maps.json',
     /**

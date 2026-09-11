@@ -96,6 +96,10 @@ Quellenangabe verpflichtend (opendata.swiss `terms_by`).
 | Luftfahrthindernisse | BAZL | GeoJSON (identify) | an |
 | Windenergieanlagen | BFE | WMS | aus |
 | Hindernisbegrenzungsflächen | BAZL | WMS | aus |
+| Skitouren | swisstopo | WMTS | aus |
+| Schneeschuhrouten | swisstopo | WMTS | aus |
+| Winterwanderwege | ASTRA | WMTS | aus |
+| Mountainbikeland | ASTRA | WMTS | aus |
 | Moorlandschaften, Auen, BLN, Waldreservate | BAFU | WMTS | aus |
 | Gewässer (kant. Regeln) | swisstopo | WMTS | aus |
 | Ortsnamen | swisstopo | WMTS | an |
