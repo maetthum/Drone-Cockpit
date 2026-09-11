@@ -1087,5 +1087,12 @@ export const UI = {
      * die Flächen trotzdem nicht ausbleiben. Lieber etwas Gedränge beim Laden
      * als eine Karte ohne Sperrzonen.
      */
-    overlayDelayMaxMs: 4000
+    overlayDelayMaxMs: 4000,
+    /**
+     * Nach so viel Ruhe tritt der Knopfstapel (Layer, Modi, Zu-mir, Kompass)
+     * zurück — während der Fahrt soll die Karte im Blick bleiben, nicht der
+     * Rahmen drumherum. Ungeprüft am Gerät, welcher Wert sich unterwegs
+     * richtig anfühlt; 5 s ist ein erster Ansatz.
+     */
+    controlsIdleMs: 5000
 };

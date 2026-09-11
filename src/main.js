@@ -59,7 +59,8 @@ const els = {
     hudToggle: document.getElementById('hud-toggle'),
     anchorToggle: document.getElementById('anchor-toggle'),
     layersToggle: document.getElementById('layers-toggle'),
-    layersPanel: document.getElementById('layers-panel')
+    layersPanel: document.getElementById('layers-panel'),
+    controls: document.getElementById('controls')
 };
 
 const STATUS_TEXT = {
@@ -598,6 +599,22 @@ async function main() {
     verbindePanel(els.quellenToggle, els.quellen, 'Quellen einblenden', 'Quellen ausblenden');
     verbindePanel(els.hudToggle, els.hud, 'Positionsdaten einblenden', 'Positionsdaten ausblenden');
     verbindePanel(els.anchorToggle, els.anchorControl, 'Kameralage einblenden', 'Kameralage ausblenden');
+
+    /*
+     * Knopfstapel (Layer, Modi, Zu-mir, Kompass) tritt bei Inaktivität
+     * zurück — während der Fahrt soll die Karte im Blick bleiben, nicht der
+     * Rahmen drumherum. Ein Tipp irgendwo auf dem Bildschirm holt ihn sofort
+     * zurück; `{passive: true}`, weil hier nirgends `preventDefault` nötig
+     * ist und die übrigen Touch-Handler nicht gebremst werden sollen.
+     */
+    let idleTimer = null;
+    function wachAuf() {
+        els.controls.classList.remove('idle');
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => els.controls.classList.add('idle'), UI.controlsIdleMs);
+    }
+    document.addEventListener('pointerdown', wachAuf, {passive: true});
+    wachAuf();
 
     /*
      * Vollbild — vor allem im Querformat, wo Safaris Leisten die knappe Höhe

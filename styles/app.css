@@ -417,6 +417,7 @@ html, body {
 
 /* --- Phase 4a: Layer-Panel --- */
 
+/* Rundes Icon statt Textknopf, wie die übrigen Knöpfe im Stapel. */
 .layers-toggle {
     /* Unten rechts über den Modi: oben liegt das HUD, dessen Breite vom Inhalt
        abhängt — dort würde das Panel Zeilen verdecken. */
@@ -424,10 +425,15 @@ html, body {
     right: 10px;
     bottom: calc(var(--safe-bottom) + 132px);
     z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
     appearance: none;
     border: 0;
     border-radius: 999px;
-    padding: 10px 16px;
     background: var(--panel);
     color: var(--fg);
     font: inherit;
@@ -595,9 +601,10 @@ html, body {
 .controls {
     position: absolute;
     right: 10px;
-    /* Über den Fusszeilen: auf iPhone-Breite brach der Hinweistext sonst um und
-       lief in die Modus-Knöpfe. */
-    bottom: calc(var(--safe-bottom) + 80px);
+    /* Nah am unteren Rand, nur der sichere Bereich (Home-Indikator) bleibt
+       frei — der Puffer von früher war ein Rest aus der Zeit, als der
+       Dauerhinweis noch unten sass (jetzt oben, siehe .disclaimer-fixed). */
+    bottom: calc(var(--safe-bottom) + 16px);
     z-index: 3;
     display: flex;
     flex-direction: column;
@@ -608,9 +615,15 @@ html, body {
        Karte liess sich in einem breiten Streifen rechts unten nicht mehr
        schieben. Die Knöpfe selbst nehmen ihre Ereignisse wieder an. */
     pointer-events: none;
+    /* Bei Inaktivität dezent zurücktreten, ohne unerreichbar zu werden —
+       ein Fingertipp irgendwo (siehe main.js) holt die volle Deckkraft
+       sofort zurück. */
+    transition: opacity 500ms ease;
 }
 
 .controls > * { pointer-events: auto; }
+
+.controls.idle { opacity: 0.35; }
 
 /*
  * Die Kinder sitzen jetzt im Fluss des Stapels, nicht mehr absolut.
@@ -636,17 +649,17 @@ html, body {
 @media (max-height: 520px) {
     .controls {
         gap: 5px;
-        bottom: calc(var(--safe-bottom) + 46px);
+        bottom: calc(var(--safe-bottom) + 8px);
     }
 
     .recenter,
-    .compass {
+    .compass,
+    .layers-toggle {
         width: 36px;
         height: 36px;
     }
 
-    .mode-button,
-    .layers-toggle { padding: 6px 14px; }
+    .mode-button { padding: 6px 14px; }
 
     .disclaimer-fixed {
         /* Im Querformat ist die Höhe knapp: kleiner setzen, aber weiterhin

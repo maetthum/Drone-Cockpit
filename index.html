@@ -64,7 +64,13 @@
       <path d="M12 20.5 L9 12 L12 13.5 Z" fill="currentColor"/>
     </svg>
   </button>
-  <button id="layers-toggle" class="layers-toggle" aria-expanded="false">Layer</button>
+  <button id="layers-toggle" class="layers-toggle" aria-expanded="false" aria-label="Layer-Auswahl" title="Layer-Auswahl">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <path d="M12 3 L21 8 L12 13 L3 8 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M3 12 L12 17 L21 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M3 16 L12 21 L21 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
   <div id="modes" class="modes" hidden>
     <button id="mode-tracking" class="mode-button" aria-pressed="true">Tracking</button>
     <button id="mode-manual" class="mode-button" aria-pressed="false">Manuell</button>
