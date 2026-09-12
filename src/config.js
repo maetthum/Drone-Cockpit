@@ -751,7 +751,15 @@ export const OVERLAYS = [
      * Sachdatum `hikingtype`, siehe api3) — wo mit Personen zu rechnen ist.
      * Kachel angesehen: nur Linien auf transparentem Grund, kein „-karte".
      */
-    {id: 'wanderwege', label: 'Wander-/Alpinwanderwege', group: 'Wege & Routen', layer: 'ch.swisstopo.swisstlm3d-wanderwege', service: 'wmts', enabled: true, opacity: 0.9},
+    {id: 'wanderwege', label: 'Wander-/Alpinwanderwege', group: 'Wege & Routen', layer: 'ch.swisstopo.swisstlm3d-wanderwege', service: 'wmts', enabled: false, opacity: 0.9},
+    /*
+     * Alle Strassen und Wege (nicht nur die signalisierten Routen oben) — gegen
+     * den echten Katalog geprüft, Kachel angesehen: 88 % transparent, der Rest
+     * Linien in Strassenklassen-Farben, kein „-karte"-Vollflächenlayer. Aus,
+     * weil es keine Flugrestriktion zeigt und bei dichtem Strassennetz schnell
+     * überladen wirkt.
+     */
+    {id: 'strassen', label: 'Strassen und Wege', group: 'Wege & Routen', layer: 'ch.swisstopo.swisstlm3d-strassen', service: 'wmts', enabled: false, opacity: 0.9},
     /*
      * Echte Leitungsgeometrie (Leitungen, Unterwerke, Trafostationen) statt der
      * Sachplan-Korridore. Laut Legende haben noch nicht alle Netzbetreiber
