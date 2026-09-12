@@ -18,7 +18,7 @@ const TERRAIN_SOURCE_ID = 'swisstopo-terrain';
  *        Startansicht — steht schon auf der eigenen Position, damit der erste
  *        Satz Kacheln der ist, den der Nutzer auch zu sehen bekommt
  *        (siehe START_VIEW in config.js).
- * @returns {Promise<import('maplibre-gl').Map>}
+ * @returns {Promise<{map: import('maplibre-gl').Map, computeShadow: (Function|null)}>}
  */
 export async function createMap(maplibregl, container, onStatus, view) {
     const map = new maplibregl.Map({
@@ -65,14 +65,18 @@ export async function createMap(maplibregl, container, onStatus, view) {
     map.setSky(SKY);
     onStatus('basemap');
 
+    // Ohne Terrain gibt es auch keine Geländehöhen für den Schatten — bleibt
+    // dann null, und die Aufrufer blenden das Bedienelement dafür aus.
+    let computeShadow = null;
     try {
-        const {sourceSpec} = await setUpTerrain(maplibregl);
-        map.addSource(TERRAIN_SOURCE_ID, sourceSpec);
+        const terrain = await setUpTerrain(maplibregl);
+        map.addSource(TERRAIN_SOURCE_ID, terrain.sourceSpec);
         map.setTerrain({source: TERRAIN_SOURCE_ID, exaggeration: TERRAIN.exaggeration});
+        computeShadow = terrain.computeShadow;
         onStatus('terrain');
     } catch (error) {
         onStatus('terrain-failed', error);
     }
 
-    return map;
+    return {map, computeShadow};
 }

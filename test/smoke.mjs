@@ -758,6 +758,100 @@ async function testManualMode() {
 }
 
 /**
+ * Geländeschatten (12.9.2026): nur im Manuell-Modus bedienbar — im Tracking
+ * bräuchte er eine Neuberechnung im Frame-Takt statt einmal je Kamerastillstand
+ * (siehe SHADOW in config.js). Prüft die Verdrahtung, nicht die Verdeckung an
+ * echtem Gelände — das gestubbte Terrain ist überall gleich hoch.
+ */
+async function testShadowModeGating() {
+    const {browser, page, pageErrors} = await openPage({withSensorHarness: true});
+    await enterLiveMode(page);
+
+    const trackingHidden = await page.evaluate(() => document.getElementById('shadow-toggle').hidden);
+
+    await page.click('#mode-manual');
+    const manualVisible = await page.evaluate(() => !document.getElementById('shadow-toggle').hidden);
+
+    await page.evaluate(async () => {
+        window.cockpit.shadow.setEnabled(true);
+        await window.cockpit.shadow.waitForIdle();
+    });
+    const layerWhileManual = await page.evaluate(() => !!window.cockpit.map.getLayer('shadow'));
+
+    await page.click('#mode-tracking');
+    const layerAfterTracking = await page.evaluate(() => !!window.cockpit.map.getLayer('shadow'));
+    const toggleHiddenAgain = await page.evaluate(() => document.getElementById('shadow-toggle').hidden);
+    const enabledAfterTracking = await page.evaluate(() => window.cockpit.shadow.isEnabled);
+
+    await browser.close();
+
+    const failures = [];
+    if (!trackingHidden) failures.push('Schalter im Tracking sichtbar');
+    if (!manualVisible) failures.push('Schalter im Manuell-Modus nicht sichtbar');
+    if (!layerWhileManual) failures.push('Schattenlayer erscheint im Manuell-Modus nicht');
+    if (layerAfterTracking) failures.push('Schattenlayer bleibt nach Rückkehr ins Tracking stehen');
+    if (!toggleHiddenAgain) failures.push('Schalter nach Rückkehr ins Tracking noch sichtbar');
+    if (enabledAfterTracking) failures.push('Schatten gilt nach Rückkehr ins Tracking noch als eingeschaltet');
+    if (pageErrors.length > 0) failures.push(`JS-Fehler: ${pageErrors.join(' | ')}`);
+    report('Geländeschatten: nur im Manuell-Modus, geht beim Wechsel wieder aus', failures);
+}
+
+/**
+ * Mit dem gestubbten Terrain (durchweg HTTP 403, siehe openPage) liegt überall
+ * dieselbe flache Ersatzhöhe — ein Sonnenstrahl kann dort nirgends verdeckt
+ * werden. Nachts (Sonne unter dem Horizont) muss dagegen die ganze Fläche
+ * verschattet sein. Beides ist mit gestubbten Daten ehrlich prüfbar; echte
+ * Verdeckung an echtem Gelände braucht den Gerätetest.
+ */
+async function testShadowFlatTerrain() {
+    const {browser, page, pageErrors} = await openPage({withSensorHarness: true});
+    await enterLiveMode(page);
+    await page.click('#mode-manual');
+
+    async function alphaSum(iso) {
+        return page.evaluate(async (isoInner) => {
+            // Immer über den Aus-Ein-Weg, nicht über `setDate()` allein: der
+            // ist debounced (siehe SHADOW.debounceMs), `setEnabled(true)`
+            // rechnet sofort — nur dafür wartet `waitForIdle()` zuverlässig.
+            window.cockpit.shadow.setEnabled(false);
+            window.cockpit.shadow.setDate(new Date(isoInner));
+            window.cockpit.shadow.setEnabled(true);
+            await window.cockpit.shadow.waitForIdle();
+            const url = window.cockpit.shadow.lastImageUrl;
+            const img = await new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = reject;
+                image.src = url;
+            });
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const {data} = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let sum = 0;
+            for (let i = 3; i < data.length; i += 4) sum += data[i];
+            return sum;
+        }, iso);
+    }
+
+    // Sommersonnenwende, Mittag bzw. tiefe Nacht am Ort der Testposition
+    // (46,588° N/7,909° O, Lauterbrunnental) — beides eindeutig, kein
+    // Dämmerungsgrenzfall.
+    const dayAlpha = await alphaSum('2026-06-21T12:00');
+    const nightAlpha = await alphaSum('2026-06-21T00:30');
+    await browser.close();
+
+    const failures = [];
+    if (dayAlpha !== 0) failures.push(`Mittags über flachem Ersatzgelände dennoch Schatten (Alpha-Summe ${dayAlpha})`);
+    if (nightAlpha === 0) failures.push('Nachts kein Schatten — Sonnenhöhe müsste negativ sein');
+    if (pageErrors.length > 0) failures.push(`JS-Fehler: ${pageErrors.join(' | ')}`);
+    report('Geländeschatten: flaches Ersatzgelände bleibt tagsüber frei, nachts ganz verschattet', failures,
+        `Alpha-Summe Tag ${dayAlpha} · Nacht ${nightAlpha}`);
+}
+
+/**
  * Blauer Punkt mit Richtungspfeil und der Weg zurück: im Manuell-Modus zeigt
  * der Marker, wo man steht, und „Zu mir" holt die Karte dorthin, ohne den
  * Modus zu wechseln.
@@ -1616,6 +1710,8 @@ await testCompassNoiseDamped();
 await testHeightSlider();
 await testFingerGesturesInTracking();
 await testManualMode();
+await testShadowModeGating();
+await testShadowFlatTerrain();
 await testPositionMarker();
 await testCameraAnchor();
 await testTapInfo();

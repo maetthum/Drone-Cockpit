@@ -15,6 +15,7 @@ import {createInfo} from './info.js';
 import {createMeasure} from './measure.js';
 import {createPrefetch} from './prefetch.js';
 import {createRadar} from './radar.js';
+import {createShadow} from './shadow.js';
 import {keepAwake} from './wakelock.js';
 import {ATTRIBUTION_TEXT, CAMERA_STORE, DISCLAIMER, FOLLOW, OBSTACLES, OVERLAYS, RADAR, START_VIEW, TERRAIN, UI} from './config.js';
 
@@ -60,6 +61,10 @@ const els = {
     anchorToggle: document.getElementById('anchor-toggle'),
     layersToggle: document.getElementById('layers-toggle'),
     layersPanel: document.getElementById('layers-panel'),
+    shadowToggle: document.getElementById('shadow-toggle'),
+    shadowPanel: document.getElementById('shadow-panel'),
+    shadowEnable: document.getElementById('shadow-enable'),
+    shadowDatetime: document.getElementById('shadow-datetime'),
     controls: document.getElementById('controls')
 };
 
@@ -489,13 +494,14 @@ async function main() {
     const startView = await resolveStartView();
 
     let map;
+    let computeShadow;
     try {
-        map = await createMap(maplibregl, 'map', (state, detail) => {
+        ({map, computeShadow} = await createMap(maplibregl, 'map', (state, detail) => {
             els.status.textContent = STATUS_TEXT[state];
             if (state === 'terrain-failed') {
                 showBanner(`Terrain konnte nicht geladen werden: ${detail?.message ?? 'unbekannter Fehler'}`);
             }
-        }, startView);
+        }, startView));
     } catch (error) {
         els.status.textContent = 'Karte konnte nicht starten';
         showBanner(`Kartenfehler: ${error?.message ?? error}`);
@@ -516,6 +522,7 @@ async function main() {
     const overlays = createOverlays(map);
     const obstacles = createObstacles(map);
     const radar = createRadar(map);
+    const shadow = createShadow(map, computeShadow);
     const markOverlayUnavailable = buildLayerPanel(overlays, obstacles, radar);
     // Antippen beantwortet „was gilt hier?" aus den Sachdaten der Layer.
     createInfo(map, {overlays, obstacles},
@@ -762,6 +769,20 @@ async function main() {
             els.anchorControl.hidden = true;
             els.anchorToggle.setAttribute('aria-expanded', 'false');
         }
+        /*
+         * **Der Geländeschatten gehört zum Manuell-Modus** (siehe SHADOW in
+         * config.js) — im Tracking bräuchte er eine Neuberechnung im Frame-
+         * Takt, statt einmal je Kamerastillstand. Beim Verlassen des
+         * Manuell-Modus geht er deshalb wieder aus, statt einen veralteten
+         * Ausschnitt stehen zu lassen.
+         */
+        els.shadowToggle.hidden = tracking || !shadow.isAvailable;
+        if (tracking) {
+            shadow.setEnabled(false);
+            els.shadowEnable.checked = false;
+            els.shadowPanel.hidden = true;
+            els.shadowToggle.setAttribute('aria-expanded', 'false');
+        }
     }
 
     /**
@@ -860,9 +881,23 @@ async function main() {
     els.modeTracking.addEventListener('click', () => setMode(true));
     els.modeManual.addEventListener('click', () => setMode(false));
 
+    els.shadowToggle.addEventListener('click', () => {
+        const open = els.shadowPanel.hidden;
+        els.shadowPanel.hidden = !open;
+        els.shadowToggle.setAttribute('aria-expanded', String(open));
+    });
+    // Lokale Zeit fürs `datetime-local`-Feld: `toISOString()` liefert UTC, das
+    // Feld erwartet aber die Wanduhrzeit ohne Zeitzone.
+    const jetztLokal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+    els.shadowDatetime.value = jetztLokal.toISOString().slice(0, 16);
+    els.shadowEnable.addEventListener('change', () => shadow.setEnabled(els.shadowEnable.checked));
+    els.shadowDatetime.addEventListener('change', () => {
+        if (els.shadowDatetime.value) shadow.setDate(new Date(els.shadowDatetime.value));
+    });
+
     // Diagnose-Handle: erlaubt Inspektion per Safari-Webinspector im Fahrzeug
     // und ist der Zugriffspunkt für test/smoke.mjs.
-    window.cockpit = {map, follow, overlays, obstacles, me, prefetch, radar};
+    window.cockpit = {map, follow, overlays, obstacles, me, prefetch, radar, shadow};
 
     updateHud(map, follow);
     // Ein Intervall statt eines zweiten rAF-Loops: das HUD muss nicht mit

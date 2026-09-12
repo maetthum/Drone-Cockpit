@@ -440,6 +440,59 @@ html, body {
     cursor: pointer;
 }
 
+/* Gleicher Knopf wie .layers-toggle, nur im Manuell-Modus sichtbar (siehe
+   setMode in main.js) — Position kommt vom Fluss des Knopfstapels. */
+.shadow-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+
+.shadow-toggle[hidden] { display: none; }
+
+/* Gleiches Muster wie .layers-panel: mittig und aus dem Knopfstapel
+   herausgelöst, damit das Aufklappen die übrigen Knöpfe nicht verschiebt. */
+.shadow-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    width: min(260px, calc(100vw - 40px));
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--panel);
+    backdrop-filter: blur(8px);
+    display: grid;
+    gap: 10px;
+}
+
+.shadow-panel[hidden] { display: none; }
+
+.shadow-row { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.shadow-row input { accent-color: var(--fg); }
+
+.shadow-datetime {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--muted);
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    color-scheme: dark;
+}
+
 /*
  * Mittig statt am Knopfstapel: die Liste ist inzwischen zu lang für eine feste
  * Ecke, und `position: fixed` (nicht `absolute`) entzieht sie bewusst dem
@@ -634,6 +687,7 @@ html, body {
 .controls > .recenter,
 .controls > .compass,
 .controls > .layers-toggle,
+.controls > .shadow-toggle,
 .controls > .modes {
     position: static;
     right: auto;
@@ -654,7 +708,8 @@ html, body {
 
     .recenter,
     .compass,
-    .layers-toggle {
+    .layers-toggle,
+    .shadow-toggle {
         width: 36px;
         height: 36px;
     }

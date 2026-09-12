@@ -24,13 +24,24 @@ export async function setUpTerrain(maplibregl) {
     const worker = new Worker(new URL('./terrain-worker.js', import.meta.url), {type: 'module'});
     /** Offene Kachelanfragen, nach laufender Nummer. */
     const pending = new Map();
+    /** Offene Schattenanfragen — eigene Nummernkreis und eigener Nachrichtentyp. */
+    const pendingShadow = new Map();
     let nextId = 0;
+    let nextShadowId = 0;
 
     const sourceSpec = await new Promise((resolve, reject) => {
         worker.addEventListener('message', ({data: message}) => {
             if (message.type === 'ready') {
                 if (message.error) reject(new Error(message.error));
                 else resolve(message.sourceSpec);
+                return;
+            }
+            if (message.type === 'shadow') {
+                const shadowEntry = pendingShadow.get(message.id);
+                if (!shadowEntry) return;
+                pendingShadow.delete(message.id);
+                if (message.error) shadowEntry.reject(new Error(message.error));
+                else shadowEntry.resolve({bitmap: message.bitmap, bounds: message.bounds});
                 return;
             }
             const entry = pending.get(message.id);
@@ -76,6 +87,19 @@ export async function setUpTerrain(maplibregl) {
 
     return {
         sourceSpec,
+        /**
+         * Rechnet die Geländeschatten-Fläche für einen Kartenausschnitt (siehe
+         * SHADOW in config.js und `shadow.js`). Läuft im Worker, damit ein
+         * Nachladen der Live-Terrain-Kacheln nicht gebremst wird.
+         * @returns {Promise<{bitmap: ImageBitmap, bounds: object}>}
+         */
+        computeShadow(request) {
+            return new Promise((resolve, reject) => {
+                const id = nextShadowId++;
+                pendingShadow.set(id, {resolve, reject});
+                worker.postMessage({type: 'shadow', id, ...request});
+            });
+        },
         unregister: () => {
             maplibregl.removeProtocol(PROTOCOL);
             worker.terminate();

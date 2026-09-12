@@ -43,6 +43,14 @@
 
 <div id="controls" class="controls">
   <div id="layers-panel" class="layers-panel" hidden></div>
+  <div id="shadow-panel" class="shadow-panel" hidden>
+    <label class="shadow-row">
+      <input id="shadow-enable" type="checkbox">
+      <span>Geländeschatten</span>
+    </label>
+    <input id="shadow-datetime" class="shadow-datetime" type="datetime-local"
+           aria-label="Datum und Uhrzeit für den Sonnenstand">
+  </div>
   <button id="fullscreen" class="fullscreen" hidden aria-pressed="false"
           aria-label="Vollbild einschalten" title="Vollbild einschalten">
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
@@ -69,6 +77,16 @@
       <path d="M12 3 L21 8 L12 13 L3 8 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
       <path d="M3 12 L12 17 L21 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M3 16 L12 21 L21 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <!-- Nur im Manuell-Modus sichtbar (siehe setMode in main.js) — der
+       Geländeschatten ist keine Live-Tracking-Grösse. -->
+  <button id="shadow-toggle" class="shadow-toggle" hidden aria-pressed="false" aria-expanded="false"
+          aria-controls="shadow-panel" aria-label="Geländeschatten" title="Geländeschatten">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
   </button>
   <div id="modes" class="modes" hidden>

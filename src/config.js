@@ -38,6 +38,61 @@ export const TERRAIN = {
     exaggeration: 1
 };
 
+/**
+ * Geländeschatten im Manuell-Modus (Sonnenstand-Simulation, 12.9.2026).
+ *
+ * shademap.app/`mapbox-gl-shadow-simulator` fiel als Vorlage aus: das Paket ist
+ * `"license": "UNLICENSED"`, also ohne Nutzungsrecht für ein öffentliches Repo.
+ * Stattdessen eigenes Raycasting über dem vorhandenen Quantized-Mesh-Terrain
+ * (kein swissALTI3D-Import — DEM reicht, siehe unten), Sonnenstand über
+ * `suncalc` (BSD-2-Clause, vendort).
+ *
+ * **Zielkonflikt Auflösung/Reichweite, drei geprüfte Wege:**
+ *  1. Zoom 14 (wie das Live-Terrain): kein Auflösungsgewinn gegenüber der
+ *     ohnehin sichtbaren Karte.
+ *  2. Zoom 15–16, kleine Kachelzahl: sichtbar schärfere Kanten, Reichweite auf
+ *     1–2 km begrenzt. **Gewählt.**
+ *  3. Hoher Zoom mit vielen Kacheln für Auflösung *und* Reichweite: eine
+ *     einzelne Kachel deckt bei Zoom 18 auf Schweizer Breite nur rund 100 m ab
+ *     — für mehrere Kilometer Reichweite bräuchte es hunderte Kacheln je
+ *     Neuberechnung, unabsehbare Wartezeit bei jedem Zeit-/Ortswechsel.
+ *
+ * Eigene, höher gezoomte Ladung des Terrains nötig (nicht einfach das laufende
+ * Terrain unverändert weiterverwenden): swisstopo liefert kein `available`
+ * -Array, das Plugin synthetisiert die Verfügbarkeit nur bis `maxZoom` — mit
+ * `TERRAIN.maxZoom` (14) würde jede Anfrage über Zoom 14 hinaus nur denselben
+ * gröberen Kachelsatz feiner resampeln, ohne echte zusätzliche Geländedetails
+ * vom Server zu holen. Ein zweiter, separat geladener Datensatz mit `maxZoom:
+ * gridZoom` holt tatsächlich die feineren Kacheln.
+ */
+export const SHADOW = {
+    /** Zoomstufe der Schatten-Kacheln — unabhängig vom Live-Terrain-Deckel. */
+    gridZoom: 15,
+    /**
+     * Kachelraster um den Kartenmittelpunkt, Radius in Kacheln: 2 ergibt
+     * 5 × 5 = 25 geladene Kacheln.
+     */
+    gridRadiusTiles: 2,
+    /**
+     * Sichtbarer Ausschnitt in der Mitte des Rasters, Radius in Kacheln: 1
+     * ergibt 3 × 3 = 9 sichtbare Kacheln (rund 2,5 × 2,5 km bei Zoom 15). Der
+     * Rand rundherum (`gridRadiusTiles − outputRadiusTiles`, hier eine
+     * Kachelbreite) dient nur der Verdeckungsprüfung Richtung Sonne, wird aber
+     * nicht angezeigt.
+     *
+     * **Bekannte Grenze:** ein Gipfel ausserhalb dieses Rands wird nicht
+     * berücksichtigt, auch wenn er in Wirklichkeit einen Schatten bis hierher
+     * würfe. Ohne Gerätetest ungeprüft, ob das im Alltag auffällt.
+     */
+    outputRadiusTiles: 1,
+    /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
+    rayStepPixels: 2,
+    /** Deckkraft der Schattenfläche. */
+    opacity: 0.45,
+    /** Nach einer Kamerabewegung wird erst nach dieser Ruhezeit neu gerechnet. */
+    debounceMs: 400
+};
+
 /** Basemap: swisstopo-Luftbild als WMTS-Raster. VERIFY: Layer-ID/Time/Format. */
 export const BASEMAP = {
     id: 'swissimage',

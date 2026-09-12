@@ -51,6 +51,7 @@ const SHELL = [
     './src/terrain-worker.js',
     './src/prefetch.js',
     './src/radar.js',
+    './src/shadow.js',
     './src/geolocation.js',
     './src/compass.js',
     './src/follow.js',
@@ -66,6 +67,7 @@ const SHELL = [
     './vendor/maplibre-gl/maplibre-gl.css',
     './vendor/maplibre-gl-3dtiles-terrain/index.js',
     './vendor/quantized-mesh-decoder/index.js',
+    './vendor/suncalc/index.js',
     './icons/icon-180.png',
     './icons/icon-192.png',
     './icons/icon-512.png'
