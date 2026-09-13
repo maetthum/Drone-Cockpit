@@ -1,49 +1,63 @@
 /**
  * Geländeschatten im Manuell-Modus: Sonnenstand über `suncalc`, Verschattung
- * pro Bildpunkt im Fragment-Shader einer MapLibre-Custom-Layer — nicht mehr
- * per CPU-Raycasting im Worker (siehe SHADOW in config.js, 13.9.2026: am
- * Gerät hinkte die CPU-Fläche bei Kartenbewegung im Manuell-Modus spürbar
- * hinterher).
+ * pro Bildpunkt in einem eigenen, unsichtbaren WebGL-Kontext gerechnet und als
+ * MapLibre-`image`-Source angezeigt.
  *
- * `terrain.js#computeShadow()` (→ `terrain-worker.js`) liefert nur noch das
- * rohe Terrarium-Höhenraster plus ein grobes Stützpunktraster fürs
- * Gelände-Drape. Alles Sonnenstand-Abhängige (Azimut, Höhe, Nacht) bleibt
- * hier als Uniform und wird bei jedem `setDate()` sofort neu gesetzt, ohne
- * die Höhendaten neu zu laden — nur eine Kamerabewegung ausserhalb des
- * geladenen Rasters braucht ein Nachladen (debounced, wie bisher).
+ * Zwei frühere Wege verworfen (13.9.2026, siehe SHADOW in config.js):
+ *  1. CPU-Raycasting im Worker — kam am Gerät bei Kartenbewegung nicht mit
+ *     dem Kamera-Takt mit.
+ *  2. Direktes Zeichnen in MapLibres 3D-Szene (Custom Layer mit eigenem
+ *     Mercator-Mesh) — brauchte eine eigene Höhen-Umrechnung, die sich über
+ *     drei Gerätetests hinweg nie exakt genug kalibrieren liess (falsche
+ *     Bildschirmposition, dann Verschwinden bei bestimmten Zoomstufen, dann
+ *     sichtbares Schweben vor Bergkanten trotz Tiefen-Offset).
+ *
+ * Jetzt: dieselbe Verschattungsrechnung (Fragment-Shader, unverändert) läuft
+ * in einem isolierten `OffscreenCanvas`+WebGL-Kontext ohne jede Kamera-Matrix —
+ * nur ein Vollbild-Quad. Das Ergebnis geht als fertiges Bild an eine
+ * `image`-Source, die MapLibre genauso geländetreu drapiert wie das
+ * Luftbild — dieselbe, nachweislich korrekte Drapierung wie in der
+ * ursprünglichen (nur zu langsamen) CPU-Version, jetzt mit GPU-Tempo.
+ *
+ * `terrain.js#computeShadow()` (→ `terrain-worker.js`) liefert dafür nur noch
+ * das rohe Terrarium-Höhenraster plus geografische Ausdehnung — keine
+ * Verschattungsrechnung und kein Drape-Netz mehr nötig.
  *
  * Kein swissALTI3D-Import und keine `mapbox-gl-shadow-simulator`-Bibliothek —
  * die ist `"license": "UNLICENSED"` und hätte in diesem öffentlichen Repo kein
  * Nutzungsrecht (siehe SHADOW in config.js für die ganze Herleitung).
  */
 import {getPosition} from '../vendor/suncalc/index.js';
-import {SHADOW, TERRAIN} from './config.js';
+import {SHADOW} from './config.js';
 
-const LAYER_ID = 'shadow';
+const SOURCE_ID = 'shadow';
 const TILE_SIZE = 256;
 /** Obergrenze der Shader-Schleife — muss zur Kompilierzeit feststehen (GLSL ES 1.00). */
 const MAX_STEPS = 128;
 
+/** Vollbild-Quad, keine Kamera-Matrix nötig — reines Rechen-Target. */
 const VERTEX_SRC = `
-attribute vec3 a_pos;
-attribute vec2 a_uv;
-uniform mat4 u_matrix;
-// modelViewProjectionMatrix erwartet MapLibres "World Space" (Mercator-Einheits-
-// quadrat × worldSize = 512 · 2^zoom), nicht die rohen [0,1]-Koordinaten aus
-// MercatorCoordinate — deshalb hier hochskaliert statt beim Bau des Netzes
-// (worldSize ändert sich mit jedem Zoom-Schritt, das Netz nicht).
-uniform float u_worldSize;
-varying vec2 v_uv;
+attribute vec2 a_pos;
+varying vec2 v_outputUv;
 void main() {
-    v_uv = a_uv;
-    gl_Position = u_matrix * vec4(a_pos * u_worldSize, 1.0);
+    // Clip-Space y=+1 landet am oberen Bildrand (per Test verifiziert, siehe
+    // Commit-Beschreibung) — hier gegen die Bild-Zeile gespiegelt, damit
+    // v_outputUv=(0,0) der Nordwest-Ecke des sichtbaren Ausschnitts entspricht,
+    // wie überall sonst im Cockpit (Zeile 0 = Norden).
+    v_outputUv = vec2(a_pos.x * 0.5 + 0.5, 0.5 - a_pos.y * 0.5);
+    gl_Position = vec4(a_pos, 0.0, 1.0);
 }
 `;
 
 const FRAGMENT_SRC = `
 precision highp float;
-varying vec2 v_uv;
+varying vec2 v_outputUv;
 uniform sampler2D u_heights;
+// v_outputUv deckt nur den sichtbaren inneren Ausschnitt ab; u_heights ist
+// das grössere geladene Raster (Rand für die Verdeckungsprüfung Richtung
+// Sonne) — dieselbe lineare Abbildung wie zuvor im Drape-Netz, jetzt hier.
+uniform float u_uvScale;
+uniform float u_uvOffset;
 uniform float u_texelSize;
 uniform float u_metersPerPixel;
 uniform float u_rayStepPixels;
@@ -64,6 +78,7 @@ float decodeHeight(vec2 uv) {
 }
 
 void main() {
+    vec2 v_uv = v_outputUv * u_uvScale + u_uvOffset;
     if (u_night > 0.5) {
         gl_FragColor = vec4(u_color, u_opacity);
         return;
@@ -115,63 +130,110 @@ function createProgram(gl) {
 }
 
 /**
- * Baut das Drape-Netz: ein `meshCells` × `meshCells`-Raster über
- * `innerBounds`, dessen Eckpunkte mit den geladenen Höhen (aus
- * `meshHeights`) angehoben sind, plus UV-Koordinaten in die grössere
- * Höhentextur über `gridBounds` — der Rand darüber hinaus bleibt so für die
- * Verdeckungsprüfung Richtung Sonne im Shader erreichbar, genau wie zuvor
- * beim CPU-Raycasting.
+ * `image`-Source-Ecken, oben-links im Uhrzeigersinn — wie von MapLibre
+ * verlangt.
  */
-function buildMesh(maplibregl, gridBounds, innerBounds, meshHeights, meshCells) {
-    const count = meshCells + 1;
-    const positions = new Float32Array(count * count * 3);
-    const uvs = new Float32Array(count * count * 2);
-    for (let row = 0; row < count; row++) {
-        const lat = innerBounds.north + (row / meshCells) * (innerBounds.south - innerBounds.north);
-        for (let col = 0; col < count; col++) {
-            const lng = innerBounds.west + (col / meshCells) * (innerBounds.east - innerBounds.west);
-            const height = meshHeights[row * count + col] * TERRAIN.exaggeration;
-            const merc = maplibregl.MercatorCoordinate.fromLngLat({lng, lat}, height);
-            const i = row * count + col;
-            positions[i * 3] = merc.x;
-            positions[i * 3 + 1] = merc.y;
-            // `MercatorCoordinate.z` allein setzt das Quad zu tief/hoch — an
-            // Kamera-Roundtrips (unproject → reproject) gegengeprüft braucht
-            // MapLibres `modelViewProjectionMatrix` hier zusätzlich durch
-            // cos(Breite) geteilt, sonst driftet die Fläche mit der Neigung
-            // sichtbar vom echten Boden weg. In der offiziellen Doku nicht
-            // (klar) belegt, empirisch verifiziert (13.9.2026).
-            positions[i * 3 + 2] = merc.z / Math.cos((lat * Math.PI) / 180);
-            uvs[i * 2] = (lng - gridBounds.west) / (gridBounds.east - gridBounds.west);
-            uvs[i * 2 + 1] = (lat - gridBounds.north) / (gridBounds.south - gridBounds.north);
+function boundsToCoordinates({west, south, east, north}) {
+    return [[west, north], [east, north], [east, south], [west, south]];
+}
+
+/**
+ * ImageBitmap zu einer `data:`-URL — die `image`-Source-Spezifikation nimmt
+ * kein Bitmap direkt an, nur eine URL oder ein bereits geladenes Element.
+ */
+async function bitmapToDataUrl(bitmap) {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    const blob = await canvas.convertToBlob({type: 'image/png'});
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+    });
+}
+
+/**
+ * Eigener, unsichtbarer WebGL-Kontext nur für die Verschattungsrechnung — mit
+ * MapLibres eigenem Kontext (Kamera, Terrain-Tiefenpuffer) hat das nichts zu
+ * tun, deshalb auch keine der drei früheren Kamera-Kalibrierungsprobleme.
+ */
+function createComputer(outputSize, maxSteps) {
+    const canvas = new OffscreenCanvas(outputSize, outputSize);
+    const gl = canvas.getContext('webgl');
+    if (!gl) throw new Error('WebGL für Geländeschatten-Berechnung nicht verfügbar');
+    const program = createProgram(gl);
+    const loc = {
+        heights: gl.getUniformLocation(program, 'u_heights'),
+        uvScale: gl.getUniformLocation(program, 'u_uvScale'),
+        uvOffset: gl.getUniformLocation(program, 'u_uvOffset'),
+        texelSize: gl.getUniformLocation(program, 'u_texelSize'),
+        metersPerPixel: gl.getUniformLocation(program, 'u_metersPerPixel'),
+        rayStepPixels: gl.getUniformLocation(program, 'u_rayStepPixels'),
+        maxSteps: gl.getUniformLocation(program, 'u_maxSteps'),
+        sunDir: gl.getUniformLocation(program, 'u_sunDir'),
+        altitudeRad: gl.getUniformLocation(program, 'u_altitudeRad'),
+        night: gl.getUniformLocation(program, 'u_night'),
+        color: gl.getUniformLocation(program, 'u_color'),
+        opacity: gl.getUniformLocation(program, 'u_opacity'),
+        pos: gl.getAttribLocation(program, 'a_pos')
+    };
+    const quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    return {
+        /**
+         * Rechnet die Schattenfläche für ein geladenes Höhenraster und gibt
+         * sie als ImageBitmap zurück (Alpha 0 ausserhalb der Schattenfläche).
+         */
+        compute({heightsBitmap, uvScale, uvOffset, texelSize, metersPerPixel, sunDirX, sunDirY, altitudeRad, night}) {
+            gl.viewport(0, 0, outputSize, outputSize);
+            gl.disable(gl.DEPTH_TEST);
+            gl.disable(gl.BLEND);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            gl.useProgram(program);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, heightsBitmap);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.uniform1i(loc.heights, 0);
+            gl.uniform1f(loc.uvScale, uvScale);
+            gl.uniform1f(loc.uvOffset, uvOffset);
+            gl.uniform1f(loc.texelSize, texelSize);
+            gl.uniform1f(loc.metersPerPixel, metersPerPixel);
+            gl.uniform1f(loc.rayStepPixels, SHADOW.rayStepPixels);
+            gl.uniform1f(loc.maxSteps, maxSteps);
+            gl.uniform2f(loc.sunDir, sunDirX, sunDirY);
+            gl.uniform1f(loc.altitudeRad, altitudeRad);
+            gl.uniform1f(loc.night, night ? 1 : 0);
+            gl.uniform3f(loc.color, SHADOW.color[0] / 255, SHADOW.color[1] / 255, SHADOW.color[2] / 255);
+            gl.uniform1f(loc.opacity, SHADOW.opacity);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+            gl.enableVertexAttribArray(loc.pos);
+            gl.vertexAttribPointer(loc.pos, 2, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            return canvas.transferToImageBitmap();
         }
-    }
-    const indices = new Uint16Array(meshCells * meshCells * 6);
-    let k = 0;
-    for (let row = 0; row < meshCells; row++) {
-        for (let col = 0; col < meshCells; col++) {
-            const i0 = row * count + col;
-            const i1 = i0 + 1;
-            const i2 = i0 + count;
-            const i3 = i2 + 1;
-            indices[k++] = i0;
-            indices[k++] = i2;
-            indices[k++] = i1;
-            indices[k++] = i1;
-            indices[k++] = i2;
-            indices[k++] = i3;
-        }
-    }
-    return {positions, uvs, indices};
+    };
 }
 
 /**
  * @param {import('maplibre-gl').Map} map
- * @param {object} maplibregl geladenes maplibre-gl-Modul (für `MercatorCoordinate`)
  * @param {Function|null} computeShadow aus `createMap()` — `null`, wenn das
  *        Terrain nicht geladen werden konnte. Dann bleibt dieses Modul inert.
  */
-export function createShadow(map, maplibregl, computeShadow) {
+export function createShadow(map, computeShadow) {
     let enabled = false;
     let date = new Date();
     let debounceTimer = null;
@@ -180,27 +242,21 @@ export function createShadow(map, maplibregl, computeShadow) {
     let latestAppliedId = -1;
     /** Laufende Berechnung — reiner Diagnose-/Testzugang, siehe `waitForIdle`. */
     let recomputePromise = Promise.resolve();
-
-    // GL-Ressourcen, erst in onAdd() angelegt (dort gibt MapLibre den
-    // gemeinsamen WebGL-Kontext).
-    let gl = null;
-    let program = null;
-    let loc = null;
-    let texture = null;
-    let vertexBuffer = null;
-    let uvBuffer = null;
-    let indexBuffer = null;
-    let indexCount = 0;
-    let hasMesh = false;
-    let currentMetersPerPixel = 1;
+    /** Diagnose-/Testzugang: die zuletzt angewendete Bild-URL. */
+    let lastImageUrl = null;
 
     // Konstant aus SHADOW abgeleitet, unabhängig von den geladenen Daten.
     const gridPixels = (SHADOW.gridRadiusTiles * 2 + 1) * TILE_SIZE;
+    const outputSize = (SHADOW.outputRadiusTiles * 2 + 1) * TILE_SIZE;
+    const marginPixels = (SHADOW.gridRadiusTiles - SHADOW.outputRadiusTiles) * TILE_SIZE;
     const texelSize = 1 / gridPixels;
-    const maxSteps = Math.floor(((SHADOW.gridRadiusTiles - SHADOW.outputRadiusTiles) * TILE_SIZE) / SHADOW.rayStepPixels);
+    const uvScale = outputSize / gridPixels;
+    const uvOffset = marginPixels / gridPixels;
+    const maxSteps = Math.floor(marginPixels / SHADOW.rayStepPixels);
 
-    // Sonnenstand-Uniforms — unabhängig von der Höhendaten-Neuberechnung,
-    // sofort aktuell nach jedem `setDate()`.
+    /** Erst bei der ersten Anfrage angelegt (kein WebGL-Kontext für ungenutztes Feature). */
+    let computer = null;
+
     let sunDirX = 0;
     let sunDirY = -1;
     let altitudeRad = 0;
@@ -219,107 +275,9 @@ export function createShadow(map, maplibregl, computeShadow) {
         night = sun.altitude <= 0;
     }
 
-    const layer = {
-        id: LAYER_ID,
-        type: 'custom',
-        // '3d': die Fläche muss vom Terrain-Tiefenpuffer verdeckt werden
-        // können (ein Berg davor soll sie verbergen), nicht flach über allem
-        // liegen wie ein HUD-Element.
-        renderingMode: '3d',
-        onAdd(_map, glArg) {
-            gl = glArg;
-            program = createProgram(gl);
-            loc = {
-                matrix: gl.getUniformLocation(program, 'u_matrix'),
-                worldSize: gl.getUniformLocation(program, 'u_worldSize'),
-                heights: gl.getUniformLocation(program, 'u_heights'),
-                texelSize: gl.getUniformLocation(program, 'u_texelSize'),
-                metersPerPixel: gl.getUniformLocation(program, 'u_metersPerPixel'),
-                rayStepPixels: gl.getUniformLocation(program, 'u_rayStepPixels'),
-                maxSteps: gl.getUniformLocation(program, 'u_maxSteps'),
-                sunDir: gl.getUniformLocation(program, 'u_sunDir'),
-                altitudeRad: gl.getUniformLocation(program, 'u_altitudeRad'),
-                night: gl.getUniformLocation(program, 'u_night'),
-                color: gl.getUniformLocation(program, 'u_color'),
-                opacity: gl.getUniformLocation(program, 'u_opacity'),
-                pos: gl.getAttribLocation(program, 'a_pos'),
-                uv: gl.getAttribLocation(program, 'a_uv')
-            };
-            texture = gl.createTexture();
-            vertexBuffer = gl.createBuffer();
-            uvBuffer = gl.createBuffer();
-            indexBuffer = gl.createBuffer();
-        },
-        onRemove() {
-            if (!gl) return;
-            gl.deleteProgram(program);
-            gl.deleteTexture(texture);
-            gl.deleteBuffer(vertexBuffer);
-            gl.deleteBuffer(uvBuffer);
-            gl.deleteBuffer(indexBuffer);
-            gl = null;
-            hasMesh = false;
-        },
-        // MapLibre ≥ 5 (auch 6.7) ruft Custom Layer mit einem Argument-Objekt
-        // statt der früheren flachen Matrix auf — `modelViewProjectionMatrix`
-        // ist der direkte Ersatz für dieses Mercator-Koordinaten-Quad.
-        render(_gl, {modelViewProjectionMatrix}) {
-            if (!hasMesh) return;
-            gl.useProgram(program);
-            gl.enable(gl.BLEND);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-            // Tiefentest an, aber mit Tiefen-Offset Richtung Kamera: die
-            // `cos(Breite)`-Korrektur oben ist empirisch kalibriert, nicht
-            // exakt — ohne Offset verlor die Fläche bei bestimmten Zoomstufen
-            // den Tiefenvergleich gegen das eigentlich selbe Gelände hauchdünn
-            // und verschwand komplett (13.9.2026). Ganz ohne Tiefentest zeigte
-            // sich am Gerät der umgekehrte Fehler: die Fläche hing sichtbar
-            // vor/über Bergkanten, die sie eigentlich verdecken müssten. Der
-            // Offset gibt genug Toleranz gegen die Kalibrierungsungenauigkeit,
-            // ohne echte Verdeckung durch näheres Gelände zu verlieren.
-            gl.enable(gl.DEPTH_TEST);
-            gl.depthFunc(gl.LEQUAL);
-            gl.enable(gl.POLYGON_OFFSET_FILL);
-            gl.polygonOffset(-4, -150000);
-            gl.disable(gl.CULL_FACE);
-
-            gl.uniformMatrix4fv(loc.matrix, false, modelViewProjectionMatrix);
-            gl.uniform1f(loc.worldSize, 512 * 2 ** map.getZoom());
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.uniform1i(loc.heights, 0);
-            gl.uniform1f(loc.texelSize, texelSize);
-            gl.uniform1f(loc.metersPerPixel, currentMetersPerPixel);
-            gl.uniform1f(loc.rayStepPixels, SHADOW.rayStepPixels);
-            gl.uniform1f(loc.maxSteps, maxSteps);
-            gl.uniform2f(loc.sunDir, sunDirX, sunDirY);
-            gl.uniform1f(loc.altitudeRad, altitudeRad);
-            gl.uniform1f(loc.night, night ? 1 : 0);
-            gl.uniform3f(loc.color, SHADOW.color[0] / 255, SHADOW.color[1] / 255, SHADOW.color[2] / 255);
-            gl.uniform1f(loc.opacity, SHADOW.opacity);
-
-            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-            gl.enableVertexAttribArray(loc.pos);
-            gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0);
-
-            gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
-            gl.enableVertexAttribArray(loc.uv);
-            gl.vertexAttribPointer(loc.uv, 2, gl.FLOAT, false, 0, 0);
-
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-            gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_SHORT, 0);
-
-            gl.disable(gl.POLYGON_OFFSET_FILL);
-            gl.disableVertexAttribArray(loc.pos);
-            gl.disableVertexAttribArray(loc.uv);
-        }
-    };
-
-    function addLayerIfNeeded() {
-        if (!map.getLayer(LAYER_ID)) map.addLayer(layer);
-    }
-    function removeLayerIfPresent() {
-        if (map.getLayer(LAYER_ID)) map.removeLayer(LAYER_ID);
+    function removeLayer() {
+        if (map.getLayer(SOURCE_ID)) map.removeLayer(SOURCE_ID);
+        if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     }
 
     async function recompute() {
@@ -337,8 +295,7 @@ export function createShadow(map, maplibregl, computeShadow) {
                 center: {lng, lat},
                 gridZoom,
                 gridRadiusTiles: SHADOW.gridRadiusTiles,
-                outputRadiusTiles: SHADOW.outputRadiusTiles,
-                meshCells: SHADOW.meshCells
+                outputRadiusTiles: SHADOW.outputRadiusTiles
             });
         } catch {
             // Netz-/Worker-Fehler: die zuletzt gezeigte Fläche bleibt stehen,
@@ -350,32 +307,25 @@ export function createShadow(map, maplibregl, computeShadow) {
         if (id <= latestAppliedId || !enabled) return;
         latestAppliedId = id;
 
-        const {bitmap, gridBounds, innerBounds, meshHeights, meshCells, metersPerPixel} = result;
-        currentMetersPerPixel = metersPerPixel;
-        const mesh = buildMesh(maplibregl, gridBounds, innerBounds, meshHeights, meshCells);
-
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, mesh.uvs, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.DYNAMIC_DRAW);
-        indexCount = mesh.indices.length;
-
-        hasMesh = true;
-        map.triggerRepaint();
-        // `triggerRepaint()` stösst den nächsten Frame nur an, zeichnet nicht
-        // sofort — ohne diese Wartemarke gilt `waitForIdle()` schon erfüllt,
-        // bevor die neuen Daten tatsächlich auf dem Bildschirm stehen.
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const {bitmap, innerBounds, metersPerPixel} = result;
+        if (!computer) computer = createComputer(outputSize, maxSteps);
+        const resultBitmap = computer.compute({
+            heightsBitmap: bitmap,
+            uvScale, uvOffset, texelSize, metersPerPixel,
+            sunDirX, sunDirY, altitudeRad, night
+        });
+        const url = await bitmapToDataUrl(resultBitmap);
+        if (!enabled) return; // Ausgeschaltet, während die Kodierung lief.
+        lastImageUrl = url;
+        const coordinates = boundsToCoordinates(innerBounds);
+        const source = map.getSource(SOURCE_ID);
+        if (source) {
+            source.updateImage({url});
+            source.setCoordinates(coordinates);
+        } else {
+            map.addSource(SOURCE_ID, {type: 'image', url, coordinates});
+            map.addLayer({id: SOURCE_ID, type: 'raster', source: SOURCE_ID, paint: {'raster-opacity': 1}});
+        }
     }
 
     /** Startet die Berechnung und hält die Zusage für `waitForIdle` fest. */
@@ -389,9 +339,7 @@ export function createShadow(map, maplibregl, computeShadow) {
     }
 
     // Nur relevant, solange eingeschaltet — sonst liefe bei jeder
-    // Kartenbewegung im Tracking-Modus unnötig eine Anfrage mit. Eine reine
-    // Zeitänderung braucht das nicht (siehe setDate) — nur eine neue Position
-    // braucht neue Höhendaten.
+    // Kartenbewegung im Tracking-Modus unnötig eine Anfrage mit.
     map.on('moveend', () => { if (enabled) scheduleRecompute(); });
 
     return {
@@ -402,7 +350,11 @@ export function createShadow(map, maplibregl, computeShadow) {
         get isAvailable() {
             return !!computeShadow;
         },
-        /** Diagnose-/Testzugang: wartet, bis eine laufende Höhendaten-Ladung angewendet ist. */
+        /** Diagnose-/Testzugang: die zuletzt angewendete Bild-URL, oder `null`. */
+        get lastImageUrl() {
+            return lastImageUrl;
+        },
+        /** Diagnose-/Testzugang: wartet, bis eine laufende Berechnung angewendet ist. */
         async waitForIdle() {
             await recomputePromise;
         },
@@ -410,22 +362,15 @@ export function createShadow(map, maplibregl, computeShadow) {
             enabled = value && !!computeShadow;
             clearTimeout(debounceTimer);
             if (!enabled) {
-                removeLayerIfPresent();
-                hasMesh = false;
+                removeLayer();
                 return;
             }
-            addLayerIfNeeded();
             updateSun();
             triggerRecompute();
         },
         setDate(value) {
             date = value;
-            if (!enabled) return;
-            // Nur die Sonnenstand-Uniforms ändern sich — keine neuen
-            // Höhendaten nötig, ein einzelner Repaint genügt für die sofort
-            // aktuelle Fläche.
-            updateSun();
-            map.triggerRepaint();
+            if (enabled) scheduleRecompute();
         }
     };
 }

@@ -44,10 +44,7 @@ export async function setUpTerrain(maplibregl) {
                 else {
                     shadowEntry.resolve({
                         bitmap: message.bitmap,
-                        gridBounds: message.gridBounds,
                         innerBounds: message.innerBounds,
-                        meshHeights: message.meshHeights,
-                        meshCells: message.meshCells,
                         metersPerPixel: message.metersPerPixel
                     });
                 }
@@ -100,10 +97,9 @@ export async function setUpTerrain(maplibregl) {
          * Lädt das Höhenraster für den Geländeschatten eines Kartenausschnitts
          * (siehe SHADOW in config.js und `shadow.js`). Läuft im Worker, damit
          * ein Nachladen der Live-Terrain-Kacheln nicht gebremst wird. Liefert
-         * nur die Rohdaten — das Sonnenstrahl-Raycasting macht `shadow.js` im
-         * Fragment-Shader, nicht dieser Aufruf.
-         * @returns {Promise<{bitmap: ImageBitmap, gridBounds: object, innerBounds: object,
-         *   meshHeights: Float32Array, meshCells: number, metersPerPixel: number}>}
+         * nur die Rohdaten — die Verschattungsrechnung macht `shadow.js` in
+         * einem eigenen WebGL-Kontext, nicht dieser Aufruf.
+         * @returns {Promise<{bitmap: ImageBitmap, innerBounds: object, metersPerPixel: number}>}
          */
         computeShadow(request) {
             return new Promise((resolve, reject) => {

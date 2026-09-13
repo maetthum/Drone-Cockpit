@@ -72,14 +72,25 @@ export const TERRAIN = {
  * `maxGridZoom` geklammert): dieselbe Kachelzahl deckt bei niedrigerem Zoom
  * automatisch mehr Fläche ab, weil die einzelne Kachel dann real breiter ist.
  *
- * **Raycasting im GPU-Shader statt im Worker (13.9.2026).** Am Gerät hinkte
- * die Fläche bei Kartenbewegung im Manuell-Modus spürbar hinterher — das
- * Pixel-für-Pixel-Raycasting auf der CPU (`terrain-worker.js`) kam mit dem
- * Kamera-Takt nicht mit. Der Worker liefert jetzt nur noch das rohe
- * Terrarium-Höhenraster; das eigentliche Abschreiten des Sonnenstrahls läuft
- * pro Bildpunkt im Fragment-Shader einer MapLibre-Custom-Layer (`shadow.js`)
- * — MapLibres normaler Render-Loop zeichnet sie jeden Frame neu, eine
- * Zeitänderung braucht nur zwei neue Uniforms statt einer Neuberechnung.
+ * **Zwei verworfene Rechenwege, beide 13.9.2026:**
+ *  1. Pixel-für-Pixel-Raycasting auf der CPU im Worker — kam am Gerät bei
+ *     Kartenbewegung im Manuell-Modus nicht mit dem Kamera-Takt mit.
+ *  2. Dieselbe Rechnung als GPU-Fragment-Shader direkt in einer MapLibre-
+ *     Custom-Layer (schnell, aber brauchte eine eigene Mercator-Höhen-
+ *     Umrechnung für die Position im 3D-Raum) — liess sich über drei
+ *     Gerätetests hinweg nie exakt genug kalibrieren (falsche
+ *     Bildschirmposition, dann Verschwinden bei bestimmten Zoomstufen, dann
+ *     sichtbares Schweben vor Bergkanten trotz Tiefen-Offset).
+ *
+ * **Jetzt:** dieselbe Verschattungsrechnung (Fragment-Shader, unverändert)
+ * läuft in einem eigenen, unsichtbaren WebGL-Kontext ohne jede Kamera-Matrix
+ * — nur ein Vollbild-Quad. Das Ergebnis geht als fertiges Bild an eine
+ * MapLibre-`image`-Source, die geländetreu drapiert wird — genau wie das
+ * Luftbild, nachweislich korrekt (das war schon in der allerersten,
+ * CPU-basierten Fassung dieses Features so gelöst, nur zu langsam). Eine
+ * Zeitänderung braucht wie eine neue Position eine (debouncte) Neuberechnung
+ * — anders als beim Custom-Layer-Versuch keine "kostenlosen" Uniform-Updates
+ * mehr, aber die Rechnung selbst bleibt GPU-schnell.
  */
 export const SHADOW = {
     /**
@@ -109,22 +120,6 @@ export const SHADOW = {
      * würfe. Ohne Gerätetest ungeprüft, ob das im Alltag auffällt.
      */
     outputRadiusTiles: 1,
-    /**
-     * Zellen je Kante des Drape-Netzes (das Quad, das die Höhentextur ans
-     * Gelände anschmiegt) — 48 ergibt 49 × 49 Stützpunkte. Die eigentliche
-     * Verschattung rechnet der Fragment-Shader pro Bildpunkt, unabhängig von
-     * diesem Netz — die Auflösung hier bestimmt nur, wie eng die Fläche dem
-     * Gelände folgt.
-     *
-     * **16 (Startwert) war am Gerät zu grob:** über echtem Alpin-Relief
-     * interpolierte das Netz zwischen weit auseinanderliegenden Stützpunkten
-     * (Talboden, Gipfel) geradlinig — sichtbar als abgerissene, schräg in der
-     * Luft hängende Flächenfetzen statt einer dem Gelände folgenden Fläche.
-     * Auf dem flachen Testgelände der Entwicklungsumgebung nie sichtbar
-     * (13.9.2026, Gerätetest). Für die GPU auch bei 48 trivial (~4600
-     * Dreiecke).
-     */
-    meshCells: 48,
     /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
     rayStepPixels: 2,
     /**
@@ -142,7 +137,13 @@ export const SHADOW = {
      * unauffällig (13.9.2026) — auf 0,75 angehoben.
      */
     opacity: 0.75,
-    /** Nach einer Kamerabewegung wird erst nach dieser Ruhezeit neu gerechnet. */
+    /**
+     * Nach einer Kamerabewegung oder einer Zeitänderung wird erst nach dieser
+     * Ruhezeit neu gerechnet (Höhendaten laden + Verschattung im eigenen
+     * WebGL-Kontext) — beides braucht seit dem Wechsel auf die `image`-Source
+     * (13.9.2026) wieder eine echte Neuberechnung statt eines blossen
+     * Uniform-Updates, die Rechnung selbst bleibt aber GPU-schnell.
+     */
     debounceMs: 400
 };
 

@@ -120,9 +120,6 @@ function terrariumPack(height) {
     const value = Math.round((height + 32768) * 256);
     return [Math.floor(value / 65536) % 256, Math.floor(value / 256) % 256, value % 256];
 }
-function terrariumUnpack(r, g, b) {
-    return r * 256 + g + b / 256 - 32768;
-}
 
 function tile2lng(x, z) {
     return (x / 2 ** z) * 360 - 180;
@@ -133,15 +130,14 @@ function tile2lat(y, z) {
 
 /**
  * Lädt das Höhenraster für den Geländeschatten: Kachelraster um den
- * Kartenmittelpunkt zusammensetzen, als Terrarium-Textur zurückgeben, dazu
- * die Höhen an den Stützpunkten des Drape-Netzes (siehe `shadow.js`). Das
- * eigentliche Sonnenstrahl-Raycasting läuft seit dem 13.9.2026 nicht mehr
- * hier, sondern pro Bildpunkt im Fragment-Shader — sonst kam die
- * CPU-Neuberechnung bei Kartenbewegung nicht mit dem Kamera-Takt mit. Siehe
- * SHADOW in config.js für die Parameter und den Zielkonflikt
- * Auflösung/Reichweite.
+ * Kartenmittelpunkt zusammensetzen und als Terrarium-Textur zurückgeben.
+ * Die eigentliche Verschattungsrechnung läuft seit dem 13.9.2026 nicht mehr
+ * hier, sondern in einem eigenen WebGL-Kontext pro Bildpunkt (siehe
+ * `shadow.js`) — sonst kam die CPU-Neuberechnung bei Kartenbewegung nicht mit
+ * dem Kamera-Takt mit. Siehe SHADOW in config.js für die Parameter und den
+ * Zielkonflikt Auflösung/Reichweite.
  */
-async function buildShadowGrid({id, center, gridZoom, gridRadiusTiles, outputRadiusTiles, meshCells}) {
+async function buildShadowGrid({id, center, gridZoom, gridRadiusTiles, outputRadiusTiles}) {
     const TILE_SIZE = 256;
     try {
         const shadowTileHandler = await ensureShadowHandler();
@@ -175,67 +171,22 @@ async function buildShadowGrid({id, center, gridZoom, gridRadiusTiles, outputRad
             }
         }));
 
-        const {data: pixels, width, height} = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const heights = new Float32Array(width * height);
-        for (let p = 0; p < width * height; p++) {
-            heights[p] = terrariumUnpack(pixels[p * 4], pixels[p * 4 + 1], pixels[p * 4 + 2]);
-        }
-
-        // Bilinear, damit das Drape-Netz nicht an Rasterstufen hängen bleibt.
-        // Geklammert statt `null` bei Randlage: die Stützpunkte liegen immer
-        // innerhalb des sichtbaren Ausschnitts, also klar innerhalb des Rasters.
-        function sampleHeight(px, py) {
-            const x0i = Math.min(Math.max(Math.floor(px), 0), width - 2);
-            const y0i = Math.min(Math.max(Math.floor(py), 0), height - 2);
-            const fx = px - x0i;
-            const fy = py - y0i;
-            const h00 = heights[y0i * width + x0i];
-            const h10 = heights[y0i * width + x0i + 1];
-            const h01 = heights[(y0i + 1) * width + x0i];
-            const h11 = heights[(y0i + 1) * width + x0i + 1];
-            return h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) + h01 * (1 - fx) * fy + h11 * fx * fy;
-        }
-
         const metersPerPixel = (156543.03392804097 * Math.cos(latRad)) / 2 ** gridZoom;
-        const marginPixels = (gridRadiusTiles - outputRadiusTiles) * TILE_SIZE;
-        const outputSize = (2 * outputRadiusTiles + 1) * TILE_SIZE;
-
-        // Höhen an den Stützpunkten des Drape-Netzes (siehe `shadow.js`), das
-        // die Höhentextur ans Gelände anschmiegt. Grob aufgelöst — die
-        // eigentliche Verschattung rechnet der Fragment-Shader pro Bildpunkt
-        // direkt aus der Textur, unabhängig von diesem Netz.
-        const meshHeights = new Float32Array((meshCells + 1) * (meshCells + 1));
-        for (let row = 0; row <= meshCells; row++) {
-            for (let col = 0; col <= meshCells; col++) {
-                const px = marginPixels + (col / meshCells) * outputSize;
-                const py = marginPixels + (row / meshCells) * outputSize;
-                meshHeights[row * (meshCells + 1) + col] = sampleHeight(px, py);
-            }
-        }
 
         // Ganzes Raster (inkl. Rand) als Textur — der Shader braucht den Rand
         // für die Verdeckungsprüfung Richtung Sonne über den sichtbaren
-        // Ausschnitt hinaus, genau wie zuvor das CPU-Raycasting.
+        // Ausschnitt hinaus.
         const bitmap = canvas.transferToImageBitmap();
-        const gridBounds = {
-            west: tile2lng(x0, gridZoom),
-            east: tile2lng(x0 + gridSize, gridZoom),
-            north: tile2lat(y0, gridZoom),
-            south: tile2lat(y0 + gridSize, gridZoom)
-        };
-        // Geografische Ecken des sichtbaren (inneren) Ausschnitts — dieselbe
-        // Kachel-Rückrechnung wie beim Laden, nur auf den inneren Rand
-        // angewendet. Spannt das Drape-Netz auf.
+        // Geografische Ecken des sichtbaren (inneren) Ausschnitts, für die
+        // `image`-Source in shadow.js — dieselbe Kachel-Rückrechnung wie beim
+        // Laden, nur auf den inneren Rand statt auf das ganze Raster angewendet.
         const innerBounds = {
             west: tile2lng(x0 + gridRadiusTiles - outputRadiusTiles, gridZoom),
             east: tile2lng(x0 + gridRadiusTiles + outputRadiusTiles + 1, gridZoom),
             north: tile2lat(y0 + gridRadiusTiles - outputRadiusTiles, gridZoom),
             south: tile2lat(y0 + gridRadiusTiles + outputRadiusTiles + 1, gridZoom)
         };
-        self.postMessage(
-            {type: 'shadow', id, bitmap, gridBounds, innerBounds, meshHeights, meshCells, metersPerPixel},
-            [bitmap, meshHeights.buffer]
-        );
+        self.postMessage({type: 'shadow', id, bitmap, innerBounds, metersPerPixel}, [bitmap]);
     } catch (error) {
         self.postMessage({type: 'shadow', id, error: String(error?.message ?? error)});
     }

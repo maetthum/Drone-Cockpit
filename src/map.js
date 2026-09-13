@@ -52,10 +52,6 @@ export async function createMap(maplibregl, container, onStatus, view) {
         },
         ...view,
         maxPitch: 89,
-        // Sonst liesse sich das gerenderte Bild nicht zuverlässig auslesen —
-        // der Geländeschatten-Smoke-Test liest Pixel vom Karten-Canvas
-        // (siehe testShadowFlatTerrain), das braucht den erhaltenen Puffer.
-        canvasContextAttributes: {preserveDrawingBuffer: true},
         // Quellenhinweis: die Source-Attributions laufen in MapLibres
         // Attribution-Control zusammen, zusätzlich steht der fixe Hinweis
         // dauerhaft im HUD (siehe main.js).
