@@ -63,7 +63,14 @@ export const TERRAIN = {
  * `TERRAIN.maxZoom` (14) würde jede Anfrage über Zoom 14 hinaus nur denselben
  * gröberen Kachelsatz feiner resampeln, ohne echte zusätzliche Geländedetails
  * vom Server zu holen. Ein zweiter, separat geladener Datensatz mit `maxZoom:
- * gridZoom` holt tatsächlich die feineren Kacheln.
+ * maxGridZoom` holt tatsächlich die feineren Kacheln.
+ *
+ * **Zoom folgt der Kamera statt fix (13.9.2026).** Der Nutzer wollte den
+ * Schatten auch weit herausgezoomt sehen — bei fixem Zoom 15 wären das
+ * hunderte Kacheln je Neuberechnung gewesen (siehe Weg 3 oben). Stattdessen
+ * folgt `gridZoom` jetzt dem Kamera-Zoom (gerundet, auf `minGridZoom`/
+ * `maxGridZoom` geklammert): dieselbe Kachelzahl deckt bei niedrigerem Zoom
+ * automatisch mehr Fläche ab, weil die einzelne Kachel dann real breiter ist.
  *
  * **Raycasting im GPU-Shader statt im Worker (13.9.2026).** Am Gerät hinkte
  * die Fläche bei Kartenbewegung im Manuell-Modus spürbar hinterher — das
@@ -75,8 +82,16 @@ export const TERRAIN = {
  * Zeitänderung braucht nur zwei neue Uniforms statt einer Neuberechnung.
  */
 export const SHADOW = {
-    /** Zoomstufe der Schatten-Kacheln — unabhängig vom Live-Terrain-Deckel. */
-    gridZoom: 15,
+    /**
+     * Zoomstufe der Schatten-Kacheln folgt dem Kamera-Zoom (gerundet, hier
+     * geklammert) — unabhängig vom Live-Terrain-Deckel. Die Kachelzahl bleibt
+     * dabei konstant (`gridRadiusTiles`/`outputRadiusTiles`): bei niedrigerem
+     * Zoom sind dieselben Kacheln real breiter, dieselbe Kachelzahl deckt dann
+     * mehr Fläche ab, ohne mehr Netzlast (13.9.2026, „viel weiter rauszoomen
+     * und trotzdem Schatten sehen").
+     */
+    minGridZoom: 10,
+    maxGridZoom: 15,
     /**
      * Kachelraster um den Kartenmittelpunkt, Radius in Kacheln: 2 ergibt
      * 5 × 5 = 25 geladene Kacheln.

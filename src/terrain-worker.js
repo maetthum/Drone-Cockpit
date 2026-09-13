@@ -18,6 +18,7 @@ import {
     loadQuantizedMeshDataset,
     registerQuantizedMeshTerrain
 } from '../vendor/maplibre-gl-3dtiles-terrain/index.js';
+import {SHADOW} from './config.js';
 
 /** Der vom Plugin „angemeldete" Kachel-Handler. */
 let handler = null;
@@ -95,13 +96,18 @@ async function init({layerJsonUrl, options}) {
  * Live-Terrain-Deckel (`TERRAIN.maxZoom`, 14) würde jede Anfrage über Zoom 14
  * hinaus nur denselben gröberen Kachelsatz feiner resampeln — ohne echte
  * zusätzliche Geländedetails vom Server zu holen (siehe SHADOW in config.js).
+ *
+ * Immer mit `SHADOW.maxGridZoom` geladen, nicht mit dem gerade angefragten
+ * `gridZoom` (der folgt seit dem 13.9.2026 dem Kamera-Zoom, siehe shadow.js):
+ * die synthetisierte Verfügbarkeit reicht sonst nur bis zum *ersten* Aufruf —
+ * wer zuerst herauszoomt, fände beim Zurückzoomen keine feineren Kacheln mehr.
  */
-async function ensureShadowHandler(gridZoom) {
+async function ensureShadowHandler() {
     if (shadowHandler) return shadowHandler;
     if (!shadowHandlerPromise) {
         shadowHandlerPromise = (async () => {
             const {layerJsonUrl, options} = initParams;
-            const shadowDataset = await loadQuantizedMeshDataset(layerJsonUrl, {...options, maxZoom: gridZoom});
+            const shadowDataset = await loadQuantizedMeshDataset(layerJsonUrl, {...options, maxZoom: SHADOW.maxGridZoom});
             registerQuantizedMeshTerrain(shadowCollector, {dataset: shadowDataset, decode});
             return shadowHandler;
         })();
@@ -138,7 +144,7 @@ function tile2lat(y, z) {
 async function buildShadowGrid({id, center, gridZoom, gridRadiusTiles, outputRadiusTiles, meshCells}) {
     const TILE_SIZE = 256;
     try {
-        const shadowTileHandler = await ensureShadowHandler(gridZoom);
+        const shadowTileHandler = await ensureShadowHandler();
 
         const n = 2 ** gridZoom;
         const latRad = (center.lat * Math.PI) / 180;

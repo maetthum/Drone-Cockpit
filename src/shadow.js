@@ -222,9 +222,6 @@ export function createShadow(map, maplibregl, computeShadow) {
     const layer = {
         id: LAYER_ID,
         type: 'custom',
-        // '3d': die Fläche muss vom Terrain-Tiefenpuffer verdeckt werden
-        // können (ein Berg davor soll sie verbergen), nicht flach über allem
-        // liegen wie ein HUD-Element.
         renderingMode: '3d',
         onAdd(_map, glArg) {
             gl = glArg;
@@ -268,8 +265,13 @@ export function createShadow(map, maplibregl, computeShadow) {
             gl.useProgram(program);
             gl.enable(gl.BLEND);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-            gl.enable(gl.DEPTH_TEST);
-            gl.depthFunc(gl.LEQUAL);
+            // Absichtlich kein Tiefentest: die `cos(Breite)`-Korrektur oben ist
+            // empirisch kalibriert, nicht exakt — mit Tiefentest verlor die
+            // Fläche bei bestimmten (u.a. ganzzahligen) Zoomstufen den
+            // Tiefenvergleich gegen das Live-Terrain hauchdünn und verschwand
+            // komplett (13.9.2026, per Zoom-Test gefunden). Bekannter Verlust:
+            // ein Berg davor verdeckt die Fläche dadurch nicht mehr.
+            gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.CULL_FACE);
 
             gl.uniformMatrix4fv(loc.matrix, false, modelViewProjectionMatrix);
@@ -314,12 +316,16 @@ export function createShadow(map, maplibregl, computeShadow) {
         if (!enabled || !computeShadow) return;
         const id = ++requestCounter;
         const {lng, lat} = map.getCenter();
+        // Folgt dem Kamera-Zoom statt fix: dieselbe Kachelzahl deckt bei
+        // niedrigerem Zoom automatisch mehr Fläche ab (reale Kachelbreite
+        // wächst), ohne mehr Kacheln laden zu müssen.
+        const gridZoom = Math.min(SHADOW.maxGridZoom, Math.max(SHADOW.minGridZoom, Math.round(map.getZoom())));
 
         let result;
         try {
             result = await computeShadow({
                 center: {lng, lat},
-                gridZoom: SHADOW.gridZoom,
+                gridZoom,
                 gridRadiusTiles: SHADOW.gridRadiusTiles,
                 outputRadiusTiles: SHADOW.outputRadiusTiles,
                 meshCells: SHADOW.meshCells
