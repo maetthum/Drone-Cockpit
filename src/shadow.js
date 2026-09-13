@@ -288,6 +288,12 @@ export function createShadow(map, computeShadow) {
         // niedrigerem Zoom automatisch mehr Fläche ab (reale Kachelbreite
         // wächst), ohne mehr Kacheln laden zu müssen.
         const gridZoom = Math.min(SHADOW.maxGridZoom, Math.max(SHADOW.minGridZoom, Math.round(map.getZoom())));
+        // Sonnenstand jetzt einfangen, nicht erst nach dem Warten auf die
+        // Höhendaten lesen: `sunDirX`/`night`/... sind gemeinsamer,
+        // veränderlicher Zustand — würde eine neuere Anfrage (anderes Datum)
+        // dazwischen `updateSun()` aufrufen, rechnete diese Anfrage sonst
+        // versehentlich mit fremdem Sonnenstand weiter.
+        const sunSnapshot = {sunDirX, sunDirY, altitudeRad, night};
 
         let result;
         try {
@@ -305,17 +311,22 @@ export function createShadow(map, computeShadow) {
         // Zwischenzeitlich ist eine neuere Anfrage unterwegs, oder der Schatten
         // wurde inzwischen wieder ausgeschaltet — dieses Ergebnis verwerfen.
         if (id <= latestAppliedId || !enabled) return;
-        latestAppliedId = id;
 
         const {bitmap, innerBounds, metersPerPixel} = result;
         if (!computer) computer = createComputer(outputSize, maxSteps);
         const resultBitmap = computer.compute({
             heightsBitmap: bitmap,
             uvScale, uvOffset, texelSize, metersPerPixel,
-            sunDirX, sunDirY, altitudeRad, night
+            ...sunSnapshot
         });
         const url = await bitmapToDataUrl(resultBitmap);
-        if (!enabled) return; // Ausgeschaltet, während die Kodierung lief.
+        // Erneut prüfen statt die Nummer schon vor der Kodierung zu setzen:
+        // `bitmapToDataUrl` ist asynchron — ohne diese zweite Prüfung könnte
+        // eine ältere, aber langsamere Anfrage eine inzwischen bereits
+        // angewendete neuere überschreiben (z.B. beim schnellen Antippen der
+        // Checkbox oder Ziehen am Zeit-Regler).
+        if (!enabled || id <= latestAppliedId) return;
+        latestAppliedId = id;
         lastImageUrl = url;
         const coordinates = boundsToCoordinates(innerBounds);
         const source = map.getSource(SOURCE_ID);
