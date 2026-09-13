@@ -111,11 +111,20 @@ export const SHADOW = {
     outputRadiusTiles: 1,
     /**
      * Zellen je Kante des Drape-Netzes (das Quad, das die Höhentextur ans
-     * Gelände anschmiegt) — 16 ergibt 17 × 17 Stützpunkte. Grob genug fürs
-     * Gelände unter dem Schatten, die eigentliche Verschattung wird pro
-     * Bildpunkt im Fragment-Shader gerechnet, nicht von diesem Netz begrenzt.
+     * Gelände anschmiegt) — 48 ergibt 49 × 49 Stützpunkte. Die eigentliche
+     * Verschattung rechnet der Fragment-Shader pro Bildpunkt, unabhängig von
+     * diesem Netz — die Auflösung hier bestimmt nur, wie eng die Fläche dem
+     * Gelände folgt.
+     *
+     * **16 (Startwert) war am Gerät zu grob:** über echtem Alpin-Relief
+     * interpolierte das Netz zwischen weit auseinanderliegenden Stützpunkten
+     * (Talboden, Gipfel) geradlinig — sichtbar als abgerissene, schräg in der
+     * Luft hängende Flächenfetzen statt einer dem Gelände folgenden Fläche.
+     * Auf dem flachen Testgelände der Entwicklungsumgebung nie sichtbar
+     * (13.9.2026, Gerätetest). Für die GPU auch bei 48 trivial (~4600
+     * Dreiecke).
      */
-    meshCells: 16,
+    meshCells: 48,
     /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
     rayStepPixels: 2,
     /**
@@ -128,8 +137,11 @@ export const SHADOW = {
      * zu erzeugen.
      */
     color: [12, 20, 40],
-    /** Deckkraft der Schattenfläche. */
-    opacity: 0.6,
+    /**
+     * Deckkraft der Schattenfläche. 0,6 war am Gerät auf dunklem Fels zu
+     * unauffällig (13.9.2026) — auf 0,75 angehoben.
+     */
+    opacity: 0.75,
     /** Nach einer Kamerabewegung wird erst nach dieser Ruhezeit neu gerechnet. */
     debounceMs: 400
 };
