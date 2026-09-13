@@ -222,6 +222,9 @@ export function createShadow(map, maplibregl, computeShadow) {
     const layer = {
         id: LAYER_ID,
         type: 'custom',
+        // '3d': die Fläche muss vom Terrain-Tiefenpuffer verdeckt werden
+        // können (ein Berg davor soll sie verbergen), nicht flach über allem
+        // liegen wie ein HUD-Element.
         renderingMode: '3d',
         onAdd(_map, glArg) {
             gl = glArg;
@@ -265,13 +268,19 @@ export function createShadow(map, maplibregl, computeShadow) {
             gl.useProgram(program);
             gl.enable(gl.BLEND);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-            // Absichtlich kein Tiefentest: die `cos(Breite)`-Korrektur oben ist
-            // empirisch kalibriert, nicht exakt — mit Tiefentest verlor die
-            // Fläche bei bestimmten (u.a. ganzzahligen) Zoomstufen den
-            // Tiefenvergleich gegen das Live-Terrain hauchdünn und verschwand
-            // komplett (13.9.2026, per Zoom-Test gefunden). Bekannter Verlust:
-            // ein Berg davor verdeckt die Fläche dadurch nicht mehr.
-            gl.disable(gl.DEPTH_TEST);
+            // Tiefentest an, aber mit Tiefen-Offset Richtung Kamera: die
+            // `cos(Breite)`-Korrektur oben ist empirisch kalibriert, nicht
+            // exakt — ohne Offset verlor die Fläche bei bestimmten Zoomstufen
+            // den Tiefenvergleich gegen das eigentlich selbe Gelände hauchdünn
+            // und verschwand komplett (13.9.2026). Ganz ohne Tiefentest zeigte
+            // sich am Gerät der umgekehrte Fehler: die Fläche hing sichtbar
+            // vor/über Bergkanten, die sie eigentlich verdecken müssten. Der
+            // Offset gibt genug Toleranz gegen die Kalibrierungsungenauigkeit,
+            // ohne echte Verdeckung durch näheres Gelände zu verlieren.
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LEQUAL);
+            gl.enable(gl.POLYGON_OFFSET_FILL);
+            gl.polygonOffset(-4, -150000);
             gl.disable(gl.CULL_FACE);
 
             gl.uniformMatrix4fv(loc.matrix, false, modelViewProjectionMatrix);
@@ -300,6 +309,7 @@ export function createShadow(map, maplibregl, computeShadow) {
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
             gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_SHORT, 0);
 
+            gl.disable(gl.POLYGON_OFFSET_FILL);
             gl.disableVertexAttribArray(loc.pos);
             gl.disableVertexAttribArray(loc.uv);
         }
