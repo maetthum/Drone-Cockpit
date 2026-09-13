@@ -73,6 +73,7 @@ export function createShadow(map, computeShadow) {
                 gridRadiusTiles: SHADOW.gridRadiusTiles,
                 outputRadiusTiles: SHADOW.outputRadiusTiles,
                 rayStepPixels: SHADOW.rayStepPixels,
+                colorRgb: SHADOW.color,
                 opacityByte: Math.round(SHADOW.opacity * 255)
             });
         } catch {

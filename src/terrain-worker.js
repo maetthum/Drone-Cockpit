@@ -41,6 +41,37 @@ const shadowCollector = {
     removeProtocol() { shadowHandler = null; }
 };
 
+/**
+ * Cache des resampelten Schatten-Kachelbildes je `z/x/y`. Der Plugin-eigene
+ * `meshCache` (siehe `registerQuantizedMeshTerrain`) hält nur den rohen
+ * dekodierten Mesh — das teure baryzentrische Resampling auf das
+ * 256×256-Terrarium-Raster läuft bei jedem Aufruf des Protokoll-Handlers neu.
+ * Ohne diesen Cache resamplet also jede Schattenberechnung (auch ein reiner
+ * Zeitwechsel ohne Kartenbewegung) alle 25 Kacheln komplett neu.
+ * Gedeckelt, damit eine lange Fahrt den Worker nicht unbegrenzt Bitmaps
+ * ansammeln lässt — älteste Einträge fliegen zuerst raus.
+ */
+const SHADOW_TILE_CACHE_LIMIT = 100;
+const shadowTileCache = new Map();
+
+async function getShadowTile(shadowTileHandler, gridZoom, x, y) {
+    const key = `${gridZoom}/${x}/${y}`;
+    if (shadowTileCache.has(key)) {
+        const bitmap = shadowTileCache.get(key);
+        // An den Schluss verschieben (Map behält Einfügereihenfolge) — zuletzt
+        // genutzte Kacheln sollen zuletzt verworfen werden.
+        shadowTileCache.delete(key);
+        shadowTileCache.set(key, bitmap);
+        return bitmap;
+    }
+    const {data} = await shadowTileHandler({url: `quantized-mesh://${gridZoom}/${x}/${y}`}, new AbortController());
+    shadowTileCache.set(key, data);
+    if (shadowTileCache.size > SHADOW_TILE_CACHE_LIMIT) {
+        shadowTileCache.delete(shadowTileCache.keys().next().value);
+    }
+    return data;
+}
+
 /** `layer.json`-URL und Optionen aus `init()`, für den späten Schatten-Ladevorgang. */
 let initParams = null;
 let shadowHandlerPromise = null;
@@ -102,7 +133,7 @@ function tile2lat(y, z) {
  */
 async function buildShadowGrid({
     id, center, sunAzimuthDeg, sunAltitudeDeg,
-    gridZoom, gridRadiusTiles, outputRadiusTiles, rayStepPixels, opacityByte
+    gridZoom, gridRadiusTiles, outputRadiusTiles, rayStepPixels, colorRgb, opacityByte
 }) {
     const TILE_SIZE = 256;
     try {
@@ -130,8 +161,7 @@ async function buildShadowGrid({
             const dx = i % gridSize;
             const dy = Math.floor(i / gridSize);
             try {
-                const {data} = await shadowTileHandler(
-                    {url: `quantized-mesh://${gridZoom}/${x0 + dx}/${y0 + dy}`}, new AbortController());
+                const data = await getShadowTile(shadowTileHandler, gridZoom, x0 + dx, y0 + dy);
                 ctx.drawImage(data, dx * TILE_SIZE, dy * TILE_SIZE);
             } catch {
                 // Kachel nicht verfügbar — die vorgefüllte flache Ebene bleibt stehen.
@@ -194,7 +224,12 @@ async function buildShadowGrid({
                     }
                 }
                 const o = (oy * outputSize + ox) * 4;
-                out[o + 3] = shadowed ? opacityByte : 0;
+                if (shadowed) {
+                    out[o] = colorRgb[0];
+                    out[o + 1] = colorRgb[1];
+                    out[o + 2] = colorRgb[2];
+                    out[o + 3] = opacityByte;
+                }
             }
         }
 

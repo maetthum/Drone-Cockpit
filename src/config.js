@@ -87,6 +87,14 @@ export const SHADOW = {
     outputRadiusTiles: 1,
     /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
     rayStepPixels: 2,
+    /**
+     * Farbe der Schattenfläche. Bewusst nicht Schwarz/Grau: das Luftbild zeigt
+     * an Wald- und Felshängen bereits eigene, zur Aufnahmezeit gehörige
+     * Schatten — ein grauer Schleier darüber verschwindet im Bild statt sich
+     * abzuheben. Violett wie bei shademap.app kommt in Luftbildern praktisch
+     * nicht natürlich vor.
+     */
+    color: [106, 27, 154],
     /** Deckkraft der Schattenfläche. */
     opacity: 0.45,
     /** Nach einer Kamerabewegung wird erst nach dieser Ruhezeit neu gerechnet. */
