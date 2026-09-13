@@ -64,6 +64,15 @@ export const TERRAIN = {
  * gröberen Kachelsatz feiner resampeln, ohne echte zusätzliche Geländedetails
  * vom Server zu holen. Ein zweiter, separat geladener Datensatz mit `maxZoom:
  * gridZoom` holt tatsächlich die feineren Kacheln.
+ *
+ * **Raycasting im GPU-Shader statt im Worker (13.9.2026).** Am Gerät hinkte
+ * die Fläche bei Kartenbewegung im Manuell-Modus spürbar hinterher — das
+ * Pixel-für-Pixel-Raycasting auf der CPU (`terrain-worker.js`) kam mit dem
+ * Kamera-Takt nicht mit. Der Worker liefert jetzt nur noch das rohe
+ * Terrarium-Höhenraster; das eigentliche Abschreiten des Sonnenstrahls läuft
+ * pro Bildpunkt im Fragment-Shader einer MapLibre-Custom-Layer (`shadow.js`)
+ * — MapLibres normaler Render-Loop zeichnet sie jeden Frame neu, eine
+ * Zeitänderung braucht nur zwei neue Uniforms statt einer Neuberechnung.
  */
 export const SHADOW = {
     /** Zoomstufe der Schatten-Kacheln — unabhängig vom Live-Terrain-Deckel. */
@@ -85,18 +94,27 @@ export const SHADOW = {
      * würfe. Ohne Gerätetest ungeprüft, ob das im Alltag auffällt.
      */
     outputRadiusTiles: 1,
+    /**
+     * Zellen je Kante des Drape-Netzes (das Quad, das die Höhentextur ans
+     * Gelände anschmiegt) — 16 ergibt 17 × 17 Stützpunkte. Grob genug fürs
+     * Gelände unter dem Schatten, die eigentliche Verschattung wird pro
+     * Bildpunkt im Fragment-Shader gerechnet, nicht von diesem Netz begrenzt.
+     */
+    meshCells: 16,
     /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
     rayStepPixels: 2,
     /**
-     * Farbe der Schattenfläche. Bewusst nicht Schwarz/Grau: das Luftbild zeigt
-     * an Wald- und Felshängen bereits eigene, zur Aufnahmezeit gehörige
-     * Schatten — ein grauer Schleier darüber verschwindet im Bild statt sich
-     * abzuheben. Violett wie bei shademap.app kommt in Luftbildern praktisch
-     * nicht natürlich vor.
+     * Farbe der Schattenfläche. Reines Schwarz war am Gerät auf Wald-/Felshängen
+     * kaum von den echten, zur Aufnahmezeit gehörigen Schatten im Luftbild zu
+     * unterscheiden. Ein erster Versuch mit Violett (13.9.2026) verschwamm über
+     * den gelb/orangen BAFU-Zonenflächen zu Magenta und lag damit zu nahe an
+     * anderen Cockpit-Farben (Wanderweg-Pink, Amber-Route). Jetzt: dunkles,
+     * kühles Blaugrau — dunkelt jeden Untergrund ab, ohne eine neue Mischfarbe
+     * zu erzeugen.
      */
-    color: [106, 27, 154],
+    color: [12, 20, 40],
     /** Deckkraft der Schattenfläche. */
-    opacity: 0.45,
+    opacity: 0.6,
     /** Nach einer Kamerabewegung wird erst nach dieser Ruhezeit neu gerechnet. */
     debounceMs: 400
 };

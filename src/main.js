@@ -522,7 +522,7 @@ async function main() {
     const overlays = createOverlays(map);
     const obstacles = createObstacles(map);
     const radar = createRadar(map);
-    const shadow = createShadow(map, computeShadow);
+    const shadow = createShadow(map, maplibregl, computeShadow);
     const markOverlayUnavailable = buildLayerPanel(overlays, obstacles, radar);
     // Antippen beantwortet „was gilt hier?" aus den Sachdaten der Layer.
     createInfo(map, {overlays, obstacles},
