@@ -31,7 +31,6 @@ import {getPosition} from '../vendor/suncalc/index.js';
 import {SHADOW} from './config.js';
 
 const SOURCE_ID = 'shadow';
-const TILE_SIZE = 256;
 /** Obergrenze der Shader-Schleife — muss zur Kompilierzeit feststehen (GLSL ES 1.00). */
 const MAX_STEPS = 128;
 
@@ -213,7 +212,7 @@ async function bitmapToDataUrl(bitmap) {
  * MapLibres eigenem Kontext (Kamera, Terrain-Tiefenpuffer) hat das nichts zu
  * tun, deshalb auch keine der drei früheren Kamera-Kalibrierungsprobleme.
  */
-function createComputer(canvasSize, maxSteps, gridPixels) {
+function createComputer(canvasSize) {
     const canvas = new OffscreenCanvas(canvasSize, canvasSize);
     const gl = canvas.getContext('webgl');
     if (!gl) throw new Error('WebGL für Geländeschatten-Berechnung nicht verfügbar');
@@ -252,27 +251,36 @@ function createComputer(canvasSize, maxSteps, gridPixels) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     // Zwischenziel des Weichzeichner-Durchgangs — dieselbe Auflösung wie das
-    // geladene Höhenraster, nicht die (meist gröbere) Ausgabe-Canvas.
+    // geladene Höhenraster, nicht die Ausgabe-Canvas. Die Rastergrösse ändert
+    // sich seit dem stufenlosen Umbau mit der Sichtweite, die Textur wird
+    // daher bei Bedarf neu angelegt.
     const blurTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, blurTexture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gridPixels, gridPixels, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     const blurFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, blurFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, blurTexture, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    let blurSize = 0;
 
     return {
         /**
          * Rechnet die Schattenfläche für ein geladenes Höhenraster und gibt
          * sie als ImageBitmap zurück (Alpha 0 ausserhalb der Schattenfläche).
          */
-        compute({heightsBitmap, uvScale, uvOffset, texelSize, metersPerPixel, sunDirX, sunDirY, altitudeRad, night}) {
+        compute({heightsBitmap, gridPixels, uvScale, uvOffset, texelSize, rayStepPixels, maxSteps,
+            metersPerPixel, sunDirX, sunDirY, altitudeRad, night}) {
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.BLEND);
+
+            if (blurSize !== gridPixels) {
+                gl.bindTexture(gl.TEXTURE_2D, blurTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gridPixels, gridPixels, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                blurSize = gridPixels;
+            }
 
             gl.bindTexture(gl.TEXTURE_2D, texture);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -309,7 +317,7 @@ function createComputer(canvasSize, maxSteps, gridPixels) {
             gl.uniform1f(loc.uvOffset, uvOffset);
             gl.uniform1f(loc.texelSize, texelSize);
             gl.uniform1f(loc.metersPerPixel, metersPerPixel);
-            gl.uniform1f(loc.rayStepPixels, SHADOW.rayStepPixels);
+            gl.uniform1f(loc.rayStepPixels, rayStepPixels);
             gl.uniform1f(loc.maxSteps, maxSteps);
             gl.uniform2f(loc.sunDir, sunDirX, sunDirY);
             gl.uniform1f(loc.altitudeRad, altitudeRad);
@@ -345,17 +353,11 @@ export function createShadow(map, computeShadow) {
     /** Diagnose-/Testzugang: die zuletzt angewendete Bild-URL. */
     let lastImageUrl = null;
 
-    // Konstant aus SHADOW abgeleitet, unabhängig von den geladenen Daten.
-    const gridPixels = (SHADOW.gridRadiusTiles * 2 + 1) * TILE_SIZE;
-    const outputSize = (SHADOW.outputRadiusTiles * 2 + 1) * TILE_SIZE;
-    const marginPixels = (SHADOW.gridRadiusTiles - SHADOW.outputRadiusTiles) * TILE_SIZE;
-    const texelSize = 1 / gridPixels;
-    const uvScale = outputSize / gridPixels;
-    const uvOffset = marginPixels / gridPixels;
-    const maxSteps = Math.floor(marginPixels / SHADOW.rayStepPixels);
-
     /** Erst bei der ersten Anfrage angelegt (kein WebGL-Kontext für ungenutztes Feature). */
     let computer = null;
+
+    /** Zuletzt gewählte Quellstufe — Gedächtnis der Hysterese, siehe `planGrid()`. */
+    let sourceZoomState = null;
 
     let sunDirX = 0;
     let sunDirY = -1;
@@ -392,14 +394,88 @@ export function createShadow(map, computeShadow) {
         return map.unproject([canvas.clientWidth / 2, canvas.clientHeight * SHADOW.centerScreenFraction]);
     }
 
+    /** Sichtweite in Metern: grösster Abstand der Abtastpunkte vom Fensterzentrum. */
+    function visibleRadiusMeters(center) {
+        const canvas = map.getCanvas();
+        const metersPerLng = 111320 * Math.cos((center.lat * Math.PI) / 180);
+        let distance = 0;
+        for (const [fx, fy] of SHADOW.extentSamples) {
+            const point = map.unproject([fx * canvas.clientWidth, fy * canvas.clientHeight]);
+            const dx = (point.lng - center.lng) * metersPerLng;
+            const dy = (point.lat - center.lat) * 110540;
+            const d = Math.hypot(dx, dy);
+            // Zielt der Abtastpunkt über den Horizont, liefert `unproject()`
+            // keinen brauchbaren Bodenpunkt — das fangen der Endlichkeitstest
+            // und der Deckel darunter ab.
+            if (Number.isFinite(d)) distance = Math.max(distance, d);
+        }
+        return Math.min(Math.max(distance, SHADOW.minVisibleMeters), SHADOW.maxVisibleMeters);
+    }
+
+    /**
+     * Legt Fenster und Abtastung für eine Neuberechnung fest — **stufenlos**
+     * (14.9.2026, Gerätebefund „Schatten springt hin und her, nur durch
+     * Zoomänderung" und „ich will keine Stufen").
+     *
+     * Vorher hing alles an einer ganzzahligen Kachelstufe: Fensterbreite,
+     * Reichweite des Sonnenstrahls und Auflösung sprangen gemeinsam, sobald
+     * `Math.round(map.getZoom())` umklappte — das Fenster halbierte sich (bei
+     * Stufe 12 20 km breit, bei 13 nur noch 10 km), und entferntes Gelände
+     * verlor schlagartig seinen Schatten. Gemessen kippte die verschattete
+     * Fläche bei 0,1 Zoomstufen Unterschied zwischen 20,1 % und 24,8 %.
+     * Zusätzlich sass das Fenster auf ganzen Kachelgrenzen und sprang beim
+     * Schwenken in Kachelbreiten (3,3 km bei Stufe 13).
+     *
+     * Jetzt sind **Fensterbreite und Reichweite Meterwerte**, die stetig der
+     * Sichtweite folgen. Ganzzahlig bleibt allein die Stufe der Quellkacheln
+     * (Kacheln gibt es nur so) — sie bestimmt nur noch den Detailgrad, nicht
+     * mehr Ausschnitt oder Reichweite, und wird über eine Hysterese selten
+     * gewechselt. Der Wechsel ändert das Bild dadurch kaum sichtbar.
+     */
+    function planGrid(center) {
+        const sichtweite = visibleRadiusMeters(center);
+        const halbeBreite = sichtweite + SHADOW.rayReachMeters;
+        const metersPerPixelAt = (zoom) => (156543.03392804097 * Math.cos((center.lat * Math.PI) / 180)) / 2 ** zoom;
+        // Feinste Stufe, deren Raster noch unter den Pixel-Deckel passt — der
+        // deckelt zugleich die Zahl der zu ladenden Kacheln.
+        const ideal = Math.log2((SHADOW.maxGridPixels * 156543.03392804097
+            * Math.cos((center.lat * Math.PI) / 180)) / (2 * halbeBreite));
+        const ziel = Math.min(SHADOW.maxGridZoom, Math.max(SHADOW.minGridZoom, Math.floor(ideal)));
+        // Einseitige Hysterese: passt die laufende Stufe nicht mehr unter den
+        // Deckel, sofort wechseln; wäre bloss eine feinere möglich, erst nach
+        // einem vollen Stufenabstand plus Totband.
+        const behalten = sourceZoomState !== null
+            && sourceZoomState <= ideal
+            && ideal - sourceZoomState < 1 + SHADOW.gridZoomHysteresis
+            && sourceZoomState >= SHADOW.minGridZoom
+            && sourceZoomState <= SHADOW.maxGridZoom;
+        const sourceZoom = behalten ? sourceZoomState : ziel;
+        sourceZoomState = sourceZoom;
+
+        const metersPerPixel = metersPerPixelAt(sourceZoom);
+        // Gerade Pixelzahl, damit das Zentrum auf einer Pixelgrenze liegt.
+        const gridPixels = 2 * Math.round(halbeBreite / metersPerPixel);
+        const marginPixels = Math.round(SHADOW.rayReachMeters / metersPerPixel);
+        const outputPixels = gridPixels - 2 * marginPixels;
+        // Der Strahl durchquert den Rand in stets derselben Schrittzahl, die
+        // Schrittweite wächst also mit dem Rand — so bleibt die Reichweite in
+        // Metern konstant, statt an der Schrittzahl zu hängen.
+        const rayStepPixels = Math.max(1, marginPixels / MAX_STEPS);
+        return {
+            sourceZoom, gridPixels, marginPixels, metersPerPixel, rayStepPixels,
+            maxSteps: Math.min(MAX_STEPS, Math.floor(marginPixels / rayStepPixels)),
+            texelSize: 1 / gridPixels,
+            uvScale: outputPixels / gridPixels,
+            uvOffset: marginPixels / gridPixels
+        };
+    }
+
     async function recompute() {
         if (!enabled || !computeShadow) return;
         const id = ++requestCounter;
-        const {lng, lat} = gridCenter();
-        // Folgt dem Kamera-Zoom statt fix: dieselbe Kachelzahl deckt bei
-        // niedrigerem Zoom automatisch mehr Fläche ab (reale Kachelbreite
-        // wächst), ohne mehr Kacheln laden zu müssen.
-        const gridZoom = Math.min(SHADOW.maxGridZoom, Math.max(SHADOW.minGridZoom, Math.round(map.getZoom())));
+        const center = gridCenter();
+        const {lng, lat} = center;
+        const plan = planGrid(center);
         // Sonnenstand jetzt einfangen, nicht erst nach dem Warten auf die
         // Höhendaten lesen: `sunDirX`/`night`/... sind gemeinsamer,
         // veränderlicher Zustand — würde eine neuere Anfrage (anderes Datum)
@@ -417,9 +493,9 @@ export function createShadow(map, computeShadow) {
             try {
                 result = await computeShadow({
                     center: {lng, lat},
-                    gridZoom,
-                    gridRadiusTiles: SHADOW.gridRadiusTiles,
-                    outputRadiusTiles: SHADOW.outputRadiusTiles
+                    sourceZoom: plan.sourceZoom,
+                    gridPixels: plan.gridPixels,
+                    marginPixels: plan.marginPixels
                 });
                 break;
             } catch {
@@ -432,14 +508,20 @@ export function createShadow(map, computeShadow) {
         if (id <= latestAppliedId || !enabled) return;
 
         const {bitmap, innerBounds, metersPerPixel} = result;
-        // Rechen-Canvas höher aufgelöst als die Kachelauflösung (Supersampling,
-        // siehe SHADOW.outputSupersample): die uvScale/uvOffset-Rechnung oben
-        // bleibt unverändert texelbasiert, hier wird nur die Anzahl
-        // unabhängig entschiedener Ausgabepixel erhöht.
-        if (!computer) computer = createComputer(outputSize * SHADOW.outputSupersample, maxSteps, gridPixels);
+        // Feste Auflösung der Ausgabe, unabhängig von der Rastergrösse: der
+        // Shader bildet `v_outputUv` (0…1 über die Rechen-Canvas) ohnehin über
+        // `uvScale`/`uvOffset` auf das Raster ab, die beiden Grössen müssen
+        // also nicht zueinander passen.
+        if (!computer) computer = createComputer(SHADOW.outputPixels);
         const resultBitmap = computer.compute({
             heightsBitmap: bitmap,
-            uvScale, uvOffset, texelSize, metersPerPixel,
+            gridPixels: plan.gridPixels,
+            uvScale: plan.uvScale,
+            uvOffset: plan.uvOffset,
+            texelSize: plan.texelSize,
+            rayStepPixels: plan.rayStepPixels,
+            maxSteps: plan.maxSteps,
+            metersPerPixel,
             ...sunSnapshot
         });
         const url = await bitmapToDataUrl(resultBitmap);

@@ -94,41 +94,112 @@ export const TERRAIN = {
  */
 export const SHADOW = {
     /**
-     * Zoomstufe der Schatten-Kacheln folgt dem Kamera-Zoom (gerundet, hier
-     * geklammert) — unabhängig vom Live-Terrain-Deckel. Die Kachelzahl bleibt
-     * dabei konstant (`gridRadiusTiles`/`outputRadiusTiles`): bei niedrigerem
-     * Zoom sind dieselben Kacheln real breiter, dieselbe Kachelzahl deckt dann
-     * mehr Fläche ab, ohne mehr Netzlast (13.9.2026, „viel weiter rauszoomen
-     * und trotzdem Schatten sehen").
+     * Grenzen der Rasterstufe der Schatten-Kacheln — unabhängig vom
+     * Live-Terrain-Deckel. Die Kachelzahl bleibt über alle Stufen konstant
+     * (`gridRadiusTiles`/`outputRadiusTiles`): bei niedrigerer Stufe sind
+     * dieselben Kacheln real breiter und decken mehr Fläche ab, ohne mehr
+     * Netzlast (13.9.2026, „viel weiter rauszoomen und trotzdem Schatten
+     * sehen").
+     *
+     * **Die Stufe folgte bis zum 14.9.2026 dem gerundeten Kamera-Zoom.** Das
+     * war die Ursache eines Gerätebefunds („Schatten springt hin und her, nur
+     * durch Zoomänderung"): an jeder Rundungsgrenze kippte die Stufe, und mit
+     * ihr halbierte sich das Fenster — bei Stufe 12 ist es 20 km breit, bei 13
+     * nur noch 10 km, die Reichweite des Sonnenstrahls entsprechend 6,7 statt
+     * 3,3 km. Nachgemessen kippte die verschattete Fläche bei 0,1 Zoomstufen
+     * Unterschied zwischen 20,1 % und 24,8 %. Jetzt wählt
+     * `shadow.js#chooseGridZoom()` die Stufe aus der tatsächlich sichtbaren
+     * Bodenfläche, mit Hysterese (siehe dort sowie `extentSamples`,
+     * `maxVisibleMeters`, `gridZoomHysteresis`).
      */
     minGridZoom: 10,
     maxGridZoom: 15,
     /**
-     * Kachelraster um den Fensterzentrum (siehe `centerScreenFraction`),
-     * Radius in Kacheln: 2 ergibt 5 × 5 = 25 geladene Kacheln.
+     * Abtastpunkte für die sichtbare Bodenfläche, als Anteil von Breite und
+     * Höhe des Kartenfensters (0/0 = oben links). Die untere Kante liefert das
+     * kameranahe Ende, die oberen Punkte das ferne.
      *
-     * **Kurzzeitig auf 3 erhöht und wieder zurückgenommen (14.9.2026,
-     * Gerätebefund Glarus).** Ein grösseres Fenster (49 Kacheln) sollte das
-     * Problem unten kompensieren, kostete aber gemessen (echtes Netz) 4,4 s
-     * für die erste Berechnung eines neuen Gebiets — bewegt sich die Kamera
-     * in dieser Zeit weiter, verwirft der Debounce das Ergebnis, bevor es
-     * ankommt ("Schatten wird nach kurzer Zeit nicht mehr angezeigt"). Die
-     * eigentliche Ursache (siehe `centerScreenFraction`) beseitigt, statt sie
-     * mit mehr Fläche zu überdecken.
+     * **Warum das Fenster wirklich das ganze Bild abdecken muss:** liegt der
+     * Fensterrand im Bild, sieht man ihn — dort hört der Schatten schlicht
+     * auf. Und weil Fenstermitte und Sichtweite geländebewusst gemessen
+     * werden (`unproject()` trifft den echten Boden), wandert der Rand bei
+     * flacher Kamera um mehrere hundert Meter, sobald der Messstrahl über
+     * einen Grat streicht — im Schwenktest 14.9.2026 gemessen: ±600 bis 800 m
+     * bei 150-m-Schritten der Kamera. Deckt das Fenster das ganze Bild ab,
+     * liegt dieser Rand ausserhalb und das Wandern bleibt unsichtbar.
+     *
+     * Nicht bis ganz nach oben (0), weil dort bei flacher Kamera der Himmel
+     * beginnt und `unproject()` keinen brauchbaren Bodenpunkt mehr liefert —
+     * solche Ausreisser fangen der Endlichkeitstest in `shadow.js` und
+     * `maxVisibleMeters` ab.
      */
-    gridRadiusTiles: 2,
+    extentSamples: [[0, 1], [1, 1], [0, 0.6], [1, 0.6], [0, 0.25], [1, 0.25], [0.5, 0.25]],
     /**
-     * Sichtbarer Ausschnitt in der Mitte des Rasters, Radius in Kacheln: 1
-     * ergibt 3 × 3 = 9 sichtbare Kacheln (rund 2,5 × 2,5 km bei Zoom 15). Der
-     * Rand rundherum (`gridRadiusTiles − outputRadiusTiles`, hier eine
-     * Kachelbreite) dient nur der Verdeckungsprüfung Richtung Sonne, wird aber
-     * nicht angezeigt.
-     *
-     * **Bekannte Grenze:** ein Gipfel ausserhalb dieses Rands wird nicht
-     * berücksichtigt, auch wenn er in Wirklichkeit einen Schatten bis hierher
-     * würfe.
+     * Deckel für die gemessene Sichtweite. Fängt Abtastpunkte ab, die knapp
+     * über den Horizont zielen und dadurch absurd weit entfernte Bodenpunkte
+     * liefern würden — ohne ihn würde ein Streifen Himmel am oberen Bildrand
+     * die Stufe auf das gröbste Mass ziehen. 30 km lässt `minGridZoom` (Stufe
+     * 10, 80 km Fenster) weiterhin erreichbar, deckelt aber den Unsinn.
      */
-    outputRadiusTiles: 1,
+    maxVisibleMeters: 30000,
+    /**
+     * Untergrenze derselben Messung. Fängt den Fall ab, dass alle
+     * Abtastpunkte fast auf dem Fensterzentrum landen (sehr steile Kamera,
+     * sehr nah am Boden) — ohne sie würde das Fenster beliebig klein und die
+     * Kachelstufe ins Maximum laufen.
+     */
+    minVisibleMeters: 500,
+    /**
+     * Totband der Stufenwahl, in Zoomstufen. Die Hysterese ist einseitig:
+     * deckt die laufende Stufe die sichtbare Fläche nicht mehr ab, wird
+     * sofort gewechselt; wäre bloss eine feinere Stufe möglich, erst wenn sie
+     * um mehr als eine volle Stufe plus diesen Wert zu grob geworden ist.
+     * 0,5 ergibt ein Band von einer halben Zoomstufe — weit genug, dass
+     * Zoomen um die Grenze herum nicht mehr flackert.
+     */
+    gridZoomHysteresis: 0.5,
+    /**
+     * Reichweite der Verdeckungsprüfung Richtung Sonne, in Metern — zugleich
+     * die Breite des unsichtbaren Rands um den angezeigten Ausschnitt.
+     *
+     * **Seit dem 14.9.2026 ein Meterwert statt einer Kachelzahl.** Vorher war
+     * der Rand genau eine Kachel breit, und die Reichweite hing damit an der
+     * Kachelstufe: 6,7 km bei Stufe 12, aber nur 0,83 km bei Stufe 15 — ein
+     * Faktor 8 über den Zoombereich. Beim Hineinzoomen verlor der Schatten
+     * dadurch schlagartig seine entfernten Verursacher. Jetzt bleibt die
+     * Reichweite konstant, egal wie fein das Raster ist.
+     *
+     * 4 km deckt die üblichen Schattenwürfe im Voralpen- und Alpenraum bei
+     * tiefstehender Sonne ab. Grössere Werte kosten direkt Auflösung: der Rand
+     * zählt in `maxGridPixels` mit, geht also vom sichtbaren Teil ab.
+     *
+     * **Bekannte Grenze:** ein Gipfel weiter als diese Strecke entfernt wird
+     * nicht berücksichtigt, auch wenn er in Wirklichkeit einen Schatten bis
+     * hierher würfe.
+     */
+    rayReachMeters: 4000,
+    /**
+     * Deckel der Kantenlänge des geladenen Höhenrasters, in Pixeln. Bestimmt
+     * indirekt, wie viele Quellkacheln geladen werden: bei 1280 sind es im
+     * ungünstigsten Fall (1280/256 + 1)² = 36 Kacheln, typisch 25–30.
+     *
+     * Das ist die eine Stellschraube des Zielkonflikts: die abgedeckte Fläche
+     * ergibt sich aus Sichtweite und `rayReachMeters`, dieser Deckel bestimmt,
+     * mit welcher Kachelstufe sie gefüllt wird — je höher, desto feiner das
+     * Raster und desto mehr Kacheln.
+     */
+    maxGridPixels: 1280,
+    /**
+     * Kantenlänge der Rechen-Canvas, in Pixeln — die Auflösung des erzeugten
+     * Schattenbildes. Unabhängig von der Rastergrösse: der Shader bildet seine
+     * Ausgabekoordinate ohnehin über `uvScale`/`uvOffset` auf das Raster ab.
+     *
+     * 1536 entspricht dem, was vorher aus 768 Kachelpixeln mal Faktor 2
+     * Supersampling entstand. Höher heisst feinere Schattenkanten (die
+     * Verschattungsentscheidung fällt pro Ausgabepixel), ohne dass mehr
+     * Geländedaten geladen werden müssten.
+     */
+    outputPixels: 1536,
     /**
      * Wo auf dem Bildschirm der Punkt liegt, um den das Fenster gebaut wird —
      * 0 die Bildschirmmitte (`map.getCenter()`), 1 der untere Bildrand.
@@ -145,19 +216,6 @@ export const SHADOW = {
      * den Schnittpunkt mit der Ellipsoid-Nullfläche.
      */
     centerScreenFraction: 0.75,
-    /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
-    rayStepPixels: 2,
-    /**
-     * Supersampling-Faktor der Ausgabetextur gegenüber der Kachelauflösung
-     * (Kanten-Schärfe, 14.9.2026). Ohne ihn (Faktor 1) wird beim Heranzoomen
-     * der Kamera über die Auflösung der Schatten-Kacheln hinaus jeder
-     * Ausgabepixel als grosser, blockiger Fleck sichtbar ("ausgefranst",
-     * Gerätebefund Glarus) — die Verschattungsentscheidung selbst trifft der
-     * Shader pro Ausgabepixel der Rechen-Canvas, ein höherer Faktor verfeinert
-     * also direkt die Kantenauflösung, ohne dass mehr echte Geländedaten
-     * geladen werden müssten.
-     */
-    outputSupersample: 2,
     /**
      * Weichzeichnung des Schattenrands, in Radiant Sonnenhöhe (14.9.2026,
      * gleicher Gerätebefund wie oben). Ohne sie kippt die Verschattung an
@@ -746,6 +804,27 @@ export const FOLLOW = {
      * heraus.
      */
     kompassVorhalteTotDegrees: 8,
+    /**
+     * Rauschschwelle der Drehrate **für die Koppelnavigation**, in Grad pro
+     * Sekunde — bewusst viel kleiner als `kompassVorhalteTotDegrees`.
+     *
+     * Bis zum 14.9.2026 nutzte `koppelZiel()` dieselbe 8-°/s-Schwelle wie der
+     * Vorhalt. Das war eine stille Fehlübernahme: der Vorhalt rechnet einen
+     * Nachlauf der *Kamera* heraus und darf im Stand nicht auf Rauschen
+     * reagieren, die Koppelnavigation dagegen beschreibt die *gefahrene
+     * Bahn*. Am Gerät gemessen (Kurvenfahrt 14.9.2026): 36° Kursänderung in
+     * 10 s sind 3,6 °/s — weit unter 8, die Kreisbahn-Vorhersage war über die
+     * ganze Kurve abgeschaltet und der Weg wurde auf der Tangente
+     * weitergerechnet. Jeder neue GPS-Fix korrigierte das dann sichtbar, im
+     * Sekundentakt.
+     *
+     * Warum hier eine kleine Schwelle unbedenklich ist: die Koppelnavigation
+     * läuft ohnehin erst ab `gpsHeadingMinSpeedMps`, im Stand also gar nicht.
+     * Und selbst ±2 °/s Rauschen ergeben bei 50 km/h über eine Sekunde nur
+     * rund 0,24 m seitlichen Fehler — unsichtbar gegenüber dem Tangentenschnitt,
+     * den die alte Schwelle verursachte.
+     */
+    koppelDrehrateTotDegrees: 1.5,
     /**
      * Glättung der Drehratenschätzung. Träger als die Rate selbst gemessen
      * wird, weil eine einzelne Magnetometerstufe sonst als Drehung von

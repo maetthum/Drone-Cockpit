@@ -126,13 +126,6 @@ function terrariumPack(height) {
     return [Math.floor(value / 65536) % 256, Math.floor(value / 256) % 256, value % 256];
 }
 
-function tile2lng(x, z) {
-    return (x / 2 ** z) * 360 - 180;
-}
-function tile2lat(y, z) {
-    return (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / 2 ** z)));
-}
-
 /**
  * Lädt das Höhenraster für den Geländeschatten: Kachelraster um den
  * Kartenmittelpunkt zusammensetzen und als Terrarium-Textur zurückgeben.
@@ -142,21 +135,28 @@ function tile2lat(y, z) {
  * dem Kamera-Takt mit. Siehe SHADOW in config.js für die Parameter und den
  * Zielkonflikt Auflösung/Reichweite.
  */
-async function buildShadowGrid({id, center, gridZoom, gridRadiusTiles, outputRadiusTiles}) {
+async function buildShadowGrid({id, center, sourceZoom, gridPixels, marginPixels}) {
     const TILE_SIZE = 256;
     try {
         const shadowTileHandler = await ensureShadowHandler();
 
-        const n = 2 ** gridZoom;
         const latRad = (center.lat * Math.PI) / 180;
-        const xCenter = Math.floor(((center.lng + 180) / 360) * n);
-        const yCenter = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+        // Weltweites Pixelraster der Quellstufe: Mercator-Anteil × Kantenlänge.
+        const worldPixels = 2 ** sourceZoom * TILE_SIZE;
+        const mercX = (center.lng + 180) / 360;
+        const mercY = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2;
+        // Ursprung auf ganze Pixel gerundet, nicht auf ganze Kacheln (seit
+        // 14.9.2026): dadurch folgt das Fenster dem Blickpunkt in Schritten
+        // von einem Rasterpixel (wenige Meter) statt in ganzen Kachelbreiten
+        // (mehrere Kilometer). Ganze Pixel bleiben nötig, weil die Kacheln
+        // sonst skaliert gezeichnet werden müssten — und eine Interpolation
+        // der Terrarium-Bytes durch eine 8-Bit-Canvas zerstört die Kodierung
+        // (der R-Kanal zählt in 256-Meter-Schritten, ein gerundeter
+        // Zwischenwert wäre ein Höhenfehler von bis zu 128 m).
+        const originPxX = Math.round(mercX * worldPixels - gridPixels / 2);
+        const originPxY = Math.round(mercY * worldPixels - gridPixels / 2);
 
-        const gridSize = 2 * gridRadiusTiles + 1;
-        const x0 = xCenter - gridRadiusTiles;
-        const y0 = yCenter - gridRadiusTiles;
-
-        const canvas = new OffscreenCanvas(gridSize * TILE_SIZE, gridSize * TILE_SIZE);
+        const canvas = new OffscreenCanvas(gridPixels, gridPixels);
         const ctx = canvas.getContext('2d');
         // Flache Ersatzebene (1500 m, wie der Terrain-Fallback) vorfüllen: eine
         // nicht verfügbare Kachel soll eine plausible Fläche hinterlassen,
@@ -165,31 +165,41 @@ async function buildShadowGrid({id, center, gridZoom, gridRadiusTiles, outputRad
         ctx.fillStyle = `rgb(${fr},${fg},${fb})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        await Promise.all(Array.from({length: gridSize * gridSize}, async (_, i) => {
-            const dx = i % gridSize;
-            const dy = Math.floor(i / gridSize);
+        const xFirst = Math.floor(originPxX / TILE_SIZE);
+        const xLast = Math.floor((originPxX + gridPixels - 1) / TILE_SIZE);
+        const yFirst = Math.floor(originPxY / TILE_SIZE);
+        const yLast = Math.floor((originPxY + gridPixels - 1) / TILE_SIZE);
+        const spalten = xLast - xFirst + 1;
+        const zeilen = yLast - yFirst + 1;
+
+        await Promise.all(Array.from({length: spalten * zeilen}, async (_, i) => {
+            const tx = xFirst + (i % spalten);
+            const ty = yFirst + Math.floor(i / spalten);
             try {
-                const data = await getShadowTile(shadowTileHandler, gridZoom, x0 + dx, y0 + dy);
-                ctx.drawImage(data, dx * TILE_SIZE, dy * TILE_SIZE);
+                const data = await getShadowTile(shadowTileHandler, sourceZoom, tx, ty);
+                // Ganzzahliger Versatz, Massstab 1:1 — keine Neuabtastung.
+                ctx.drawImage(data, tx * TILE_SIZE - originPxX, ty * TILE_SIZE - originPxY);
             } catch {
                 // Kachel nicht verfügbar — die vorgefüllte flache Ebene bleibt stehen.
             }
         }));
 
-        const metersPerPixel = (156543.03392804097 * Math.cos(latRad)) / 2 ** gridZoom;
+        const metersPerPixel = (156543.03392804097 * Math.cos(latRad)) / 2 ** sourceZoom;
 
         // Ganzes Raster (inkl. Rand) als Textur — der Shader braucht den Rand
         // für die Verdeckungsprüfung Richtung Sonne über den sichtbaren
         // Ausschnitt hinaus.
         const bitmap = canvas.transferToImageBitmap();
         // Geografische Ecken des sichtbaren (inneren) Ausschnitts, für die
-        // `image`-Source in shadow.js — dieselbe Kachel-Rückrechnung wie beim
-        // Laden, nur auf den inneren Rand statt auf das ganze Raster angewendet.
+        // `image`-Source in shadow.js — jetzt aus Pixelkoordinaten
+        // zurückgerechnet, nicht mehr aus Kachelindizes.
+        const pxToLng = (px) => (px / worldPixels) * 360 - 180;
+        const pxToLat = (px) => (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - (2 * px) / worldPixels)));
         const innerBounds = {
-            west: tile2lng(x0 + gridRadiusTiles - outputRadiusTiles, gridZoom),
-            east: tile2lng(x0 + gridRadiusTiles + outputRadiusTiles + 1, gridZoom),
-            north: tile2lat(y0 + gridRadiusTiles - outputRadiusTiles, gridZoom),
-            south: tile2lat(y0 + gridRadiusTiles + outputRadiusTiles + 1, gridZoom)
+            west: pxToLng(originPxX + marginPixels),
+            east: pxToLng(originPxX + gridPixels - marginPixels),
+            north: pxToLat(originPxY + marginPixels),
+            south: pxToLat(originPxY + gridPixels - marginPixels)
         };
         self.postMessage({type: 'shadow', id, bitmap, innerBounds, metersPerPixel}, [bitmap]);
     } catch (error) {
