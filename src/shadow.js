@@ -64,6 +64,7 @@ uniform float u_rayStepPixels;
 uniform float u_maxSteps;
 uniform vec2 u_sunDir;
 uniform float u_altitudeRad;
+uniform float u_edgeSoftness;
 uniform float u_night;
 uniform vec3 u_color;
 uniform float u_opacity;
@@ -85,7 +86,12 @@ void main() {
     }
     float originHeight = decodeHeight(v_uv);
     vec2 step = u_sunDir * u_texelSize * u_rayStepPixels;
-    bool shadowed = false;
+    // Grösster Sichtwinkel entlang des Strahls statt eines reinen Ja/Nein —
+    // so lässt sich die Verschattung unten weich statt hart einblenden
+    // (14.9.2026, Gerätebefund: harte Schwelle erzeugte ein Sägezahnmuster
+    // an Gratlinien, weil benachbarte Ausgabepixel bei kleinsten
+    // Höhenschwankungen unabhängig voneinander kippten).
+    float maxAngle = -1.5707963;
     for (int i = 1; i <= ${MAX_STEPS}; i++) {
         if (float(i) > u_maxSteps) break;
         vec2 uv = v_uv + step * float(i);
@@ -94,13 +100,14 @@ void main() {
         float dist = float(i) * u_rayStepPixels * u_metersPerPixel;
         // Sichtwinkel vom Ursprung zum abgetasteten Punkt, gegen die
         // Sonnenhöhe: darüber blockiert das Gelände dort die Sonne von hier aus.
-        if (atan(h - originHeight, dist) > u_altitudeRad) {
-            shadowed = true;
-            break;
-        }
+        maxAngle = max(maxAngle, atan(h - originHeight, dist));
+        // Schon jenseits des Weichzeichner-Bands voll verschattet — weitere
+        // Schritte können das Ergebnis nicht mehr ändern.
+        if (maxAngle > u_altitudeRad + u_edgeSoftness) break;
     }
-    if (!shadowed) discard;
-    gl_FragColor = vec4(u_color, u_opacity);
+    float shadowFactor = smoothstep(u_altitudeRad - u_edgeSoftness, u_altitudeRad + u_edgeSoftness, maxAngle);
+    if (shadowFactor <= 0.0) discard;
+    gl_FragColor = vec4(u_color, u_opacity * shadowFactor);
 }
 `;
 
@@ -158,8 +165,8 @@ async function bitmapToDataUrl(bitmap) {
  * MapLibres eigenem Kontext (Kamera, Terrain-Tiefenpuffer) hat das nichts zu
  * tun, deshalb auch keine der drei früheren Kamera-Kalibrierungsprobleme.
  */
-function createComputer(outputSize, maxSteps) {
-    const canvas = new OffscreenCanvas(outputSize, outputSize);
+function createComputer(canvasSize, maxSteps) {
+    const canvas = new OffscreenCanvas(canvasSize, canvasSize);
     const gl = canvas.getContext('webgl');
     if (!gl) throw new Error('WebGL für Geländeschatten-Berechnung nicht verfügbar');
     const program = createProgram(gl);
@@ -173,6 +180,7 @@ function createComputer(outputSize, maxSteps) {
         maxSteps: gl.getUniformLocation(program, 'u_maxSteps'),
         sunDir: gl.getUniformLocation(program, 'u_sunDir'),
         altitudeRad: gl.getUniformLocation(program, 'u_altitudeRad'),
+        edgeSoftness: gl.getUniformLocation(program, 'u_edgeSoftness'),
         night: gl.getUniformLocation(program, 'u_night'),
         color: gl.getUniformLocation(program, 'u_color'),
         opacity: gl.getUniformLocation(program, 'u_opacity'),
@@ -194,7 +202,7 @@ function createComputer(outputSize, maxSteps) {
          * sie als ImageBitmap zurück (Alpha 0 ausserhalb der Schattenfläche).
          */
         compute({heightsBitmap, uvScale, uvOffset, texelSize, metersPerPixel, sunDirX, sunDirY, altitudeRad, night}) {
-            gl.viewport(0, 0, outputSize, outputSize);
+            gl.viewport(0, 0, canvasSize, canvasSize);
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.BLEND);
             gl.clearColor(0, 0, 0, 0);
@@ -214,6 +222,7 @@ function createComputer(outputSize, maxSteps) {
             gl.uniform1f(loc.maxSteps, maxSteps);
             gl.uniform2f(loc.sunDir, sunDirX, sunDirY);
             gl.uniform1f(loc.altitudeRad, altitudeRad);
+            gl.uniform1f(loc.edgeSoftness, SHADOW.edgeSoftnessRad);
             gl.uniform1f(loc.night, night ? 1 : 0);
             gl.uniform3f(loc.color, SHADOW.color[0] / 255, SHADOW.color[1] / 255, SHADOW.color[2] / 255);
             gl.uniform1f(loc.opacity, SHADOW.opacity);
@@ -320,7 +329,11 @@ export function createShadow(map, computeShadow) {
         if (id <= latestAppliedId || !enabled) return;
 
         const {bitmap, innerBounds, metersPerPixel} = result;
-        if (!computer) computer = createComputer(outputSize, maxSteps);
+        // Rechen-Canvas höher aufgelöst als die Kachelauflösung (Supersampling,
+        // siehe SHADOW.outputSupersample): die uvScale/uvOffset-Rechnung oben
+        // bleibt unverändert texelbasiert, hier wird nur die Anzahl
+        // unabhängig entschiedener Ausgabepixel erhöht.
+        if (!computer) computer = createComputer(outputSize * SHADOW.outputSupersample, maxSteps);
         const resultBitmap = computer.compute({
             heightsBitmap: bitmap,
             uvScale, uvOffset, texelSize, metersPerPixel,

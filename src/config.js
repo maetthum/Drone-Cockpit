@@ -104,24 +104,57 @@ export const SHADOW = {
     minGridZoom: 10,
     maxGridZoom: 15,
     /**
-     * Kachelraster um den Kartenmittelpunkt, Radius in Kacheln: 2 ergibt
-     * 5 × 5 = 25 geladene Kacheln.
+     * Kachelraster um den Kartenmittelpunkt, Radius in Kacheln: 3 ergibt
+     * 7 × 7 = 49 geladene Kacheln.
      */
-    gridRadiusTiles: 2,
+    gridRadiusTiles: 3,
     /**
-     * Sichtbarer Ausschnitt in der Mitte des Rasters, Radius in Kacheln: 1
-     * ergibt 3 × 3 = 9 sichtbare Kacheln (rund 2,5 × 2,5 km bei Zoom 15). Der
+     * Sichtbarer Ausschnitt in der Mitte des Rasters, Radius in Kacheln: 2
+     * ergibt 5 × 5 = 25 sichtbare Kacheln (rund 4 × 4 km bei Zoom 15). Der
      * Rand rundherum (`gridRadiusTiles − outputRadiusTiles`, hier eine
      * Kachelbreite) dient nur der Verdeckungsprüfung Richtung Sonne, wird aber
      * nicht angezeigt.
      *
+     * **Von 1 auf 2 erhöht (14.9.2026, Gerätebefund Glarus).** Das Fenster
+     * wird um `map.getCenter()` gebaut — bei starker Kameraneigung liegt
+     * dieser Punkt (Bildschirmmitte) geografisch oft weit vom Gelände am
+     * *unteren* Bildrand entfernt, dem in einer flachen FPV-Ansicht
+     * nächstgelegenen. Bei einer Kopfdrehung wanderte dieser Punkt so weit,
+     * dass der nahe Vordergrund ausserhalb des Fensters fiel und bis zur
+     * nächsten Neuberechnung unverschattet blieb — im Video sichtbar als
+     * "Schatten je nach Blickwinkel weg". Ein grösseres Fenster verkleinert
+     * das Risiko, behebt es aber nicht grundsätzlich (siehe bekannte Grenze
+     * unten); die naheliegendere Lösung — das Fenster um einen kameranahen
+     * statt um den Bildschirm-Mittelpunkt zu zentrieren — wäre ein grösserer
+     * Eingriff und blieb bewusst zurückgestellt.
+     *
      * **Bekannte Grenze:** ein Gipfel ausserhalb dieses Rands wird nicht
      * berücksichtigt, auch wenn er in Wirklichkeit einen Schatten bis hierher
-     * würfe. Ohne Gerätetest ungeprüft, ob das im Alltag auffällt.
+     * würfe.
      */
-    outputRadiusTiles: 1,
+    outputRadiusTiles: 2,
     /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
     rayStepPixels: 2,
+    /**
+     * Supersampling-Faktor der Ausgabetextur gegenüber der Kachelauflösung
+     * (Kanten-Schärfe, 14.9.2026). Ohne ihn (Faktor 1) wird beim Heranzoomen
+     * der Kamera über die Auflösung der Schatten-Kacheln hinaus jeder
+     * Ausgabepixel als grosser, blockiger Fleck sichtbar ("ausgefranst",
+     * Gerätebefund Glarus) — die Verschattungsentscheidung selbst trifft der
+     * Shader pro Ausgabepixel der Rechen-Canvas, ein höherer Faktor verfeinert
+     * also direkt die Kantenauflösung, ohne dass mehr echte Geländedaten
+     * geladen werden müssten.
+     */
+    outputSupersample: 2,
+    /**
+     * Weichzeichnung des Schattenrands, in Radiant Sonnenhöhe (14.9.2026,
+     * gleicher Gerätebefund wie oben). Ohne sie kippt die Verschattung an
+     * Gratlinien hart zwischen Ja/Nein — kleinste Höhenschwankungen im Raster
+     * lassen benachbarte Ausgabepixel dann unabhängig voneinander kippen
+     * (Sägezahnmuster am Rand). Der Wert ist ein Toleranzband um die
+     * Sonnenhöhe, in dem die Deckkraft stetig statt sprunghaft ansteigt.
+     */
+    edgeSoftnessRad: 0.02,
     /**
      * Farbe der Schattenfläche. Reines Schwarz war am Gerät auf Wald-/Felshängen
      * kaum von den echten, zur Aufnahmezeit gehörigen Schatten im Luftbild zu
