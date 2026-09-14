@@ -17,7 +17,7 @@ import {createPrefetch} from './prefetch.js';
 import {createRadar} from './radar.js';
 import {createShadow} from './shadow.js';
 import {keepAwake} from './wakelock.js';
-import {ATTRIBUTION_TEXT, CAMERA_STORE, DISCLAIMER, FOLLOW, OBSTACLES, OVERLAYS, RADAR, START_VIEW, TERRAIN, UI} from './config.js';
+import {ATTRIBUTION_TEXT, CAMERA_STORE, DISCLAIMER, FOLLOW, OBSTACLES, OVERLAYS, RADAR, SHADOW, START_VIEW, TERRAIN, UI} from './config.js';
 
 const els = {
     status: document.getElementById('hud-status'),
@@ -65,6 +65,10 @@ const els = {
     shadowPanel: document.getElementById('shadow-panel'),
     shadowEnable: document.getElementById('shadow-enable'),
     shadowDatetime: document.getElementById('shadow-datetime'),
+    shadowOpacity: document.getElementById('shadow-opacity'),
+    shadowOpacityValue: document.getElementById('shadow-opacity-value'),
+    shadowEdge: document.getElementById('shadow-edge'),
+    shadowEdgeValue: document.getElementById('shadow-edge-value'),
     controls: document.getElementById('controls')
 };
 
@@ -893,6 +897,29 @@ async function main() {
     els.shadowEnable.addEventListener('change', () => shadow.setEnabled(els.shadowEnable.checked));
     els.shadowDatetime.addEventListener('change', () => {
         if (els.shadowDatetime.value) shadow.setDate(new Date(els.shadowDatetime.value));
+    });
+
+    // Dunkelheit-Regler: linear, 0–100 % direkt auf die Deckkraft (0…1).
+    els.shadowOpacity.value = String(Math.round(SHADOW.opacity * 100));
+    els.shadowOpacityValue.textContent = `${els.shadowOpacity.value} %`;
+    els.shadowOpacity.addEventListener('input', () => {
+        shadow.setOpacity(Number(els.shadowOpacity.value) / 100);
+        els.shadowOpacityValue.textContent = `${els.shadowOpacity.value} %`;
+    });
+
+    /**
+     * Rand-Regler: logarithmisch wie der Höhenregler, 0 % = weich
+     * (`edgeSoftnessMaxRad`), 100 % = scharf (`edgeSoftnessRad`) — die
+     * meiste Reglerbewegung soll im scharfen Bereich etwas bewirken, statt
+     * dort auf den letzten paar Prozent zusammengequetscht zu sein.
+     */
+    const edgeFromSlider = (value) => SHADOW.edgeSoftnessMaxRad
+        * (SHADOW.edgeSoftnessRad / SHADOW.edgeSoftnessMaxRad) ** (Number(value) / 100);
+    els.shadowEdge.value = '100';
+    els.shadowEdgeValue.textContent = '100 %';
+    els.shadowEdge.addEventListener('input', () => {
+        shadow.setEdgeSoftness(edgeFromSlider(els.shadowEdge.value));
+        els.shadowEdgeValue.textContent = `${els.shadowEdge.value} %`;
     });
 
     // Diagnose-Handle: erlaubt Inspektion per Safari-Webinspector im Fahrzeug

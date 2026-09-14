@@ -138,10 +138,21 @@ export const SHADOW = {
      * Deckel für die gemessene Sichtweite. Fängt Abtastpunkte ab, die knapp
      * über den Horizont zielen und dadurch absurd weit entfernte Bodenpunkte
      * liefern würden — ohne ihn würde ein Streifen Himmel am oberen Bildrand
-     * die Stufe auf das gröbste Mass ziehen. 30 km lässt `minGridZoom` (Stufe
-     * 10, 80 km Fenster) weiterhin erreichbar, deckelt aber den Unsinn.
+     * die Stufe auf das gröbste Mass ziehen.
+     *
+     * **Von 30 km auf 15 km gesenkt (14.9.2026, Gerätebefund „Schatten
+     * fehlt" auf dem Üetliberg-Grat, P62°).** Am Gerät gemessen: die
+     * Abtastpunkte nahe der oberen Bildkante lieferten bei dieser Neigung
+     * 24–30 km, während die unteren nur 2,5–3 km zeigten — der Deckel griff
+     * also nicht als Ausnahme, sondern regelmässig, und trieb das Fenster auf
+     * über 60 km Kantenlänge (rund 100 m/Pixel Auflösung). Die eigentliche
+     * Ursache des „fehlenden" Schattens war die feste Nachweichzeichnung
+     * (siehe `postBlurMeters`, jetzt ein Meterwert statt Pixelwert), aber ein
+     * derart grobes Fenster ist auch für sich unnötig — 15 km deckt die
+     * meisten Kameralagen weiterhin bis zum sichtbaren Horizont ab und
+     * halbiert das ungünstigste Fenster auf rund 38 km.
      */
-    maxVisibleMeters: 30000,
+    maxVisibleMeters: 15000,
     /**
      * Untergrenze derselben Messung. Fängt den Fall ab, dass alle
      * Abtastpunkte fast auf dem Fensterzentrum landen (sehr steile Kamera,
@@ -223,8 +234,24 @@ export const SHADOW = {
      * lassen benachbarte Ausgabepixel dann unabhängig voneinander kippen
      * (Sägezahnmuster am Rand). Der Wert ist ein Toleranzband um die
      * Sonnenhöhe, in dem die Deckkraft stetig statt sprunghaft ansteigt.
+     * Auf 0,012 gesenkt (14.9.2026, Gerätebefund „Schatten kaum ersichtlich"
+     * bei naher Kamera) — härterer Übergang, ohne das Sägezahnmuster von
+     * vorher zurückzuholen. Auf 0,004 weiter gesenkt (14.9.2026, Nutzer:
+     * „ich sehe die Grenze nicht") — nahezu harte Kante, nur noch ein
+     * minimales Restband gegen das Sägezahnmuster.
+     *
+     * Auf 0,0015 weiter gesenkt und zugleich zum Laufzeit-Regler geworden
+     * (14.9.2026, Nutzer: „Rand noch klarer. Auch ein Slider") — dieser Wert
+     * ist jetzt das scharfe Ende des Reglers (100 %), `setEdgeSoftness()` in
+     * `shadow.js` überschreibt ihn zur Laufzeit.
      */
-    edgeSoftnessRad: 0.02,
+    edgeSoftnessRad: 0.0015,
+    /**
+     * Weiches Ende desselben Reglers (0 %) — der ursprüngliche, bewusst
+     * „ruhig" gewählte Wert vom Vormittag des 14.9.2026, für den Fall, dass
+     * die scharfe Kante am Gerät wieder das Sägezahnmuster zeigt.
+     */
+    edgeSoftnessMaxRad: 0.02,
     /**
      * Weichzeichnung des Höhenrasters selbst, bevor der Sonnenstrahl-Test
      * darauf läuft — in Metern, nicht in Texeln (14.9.2026, Gerätebefund:
@@ -253,19 +280,44 @@ export const SHADOW = {
      */
     heightBlurMeters: 25,
     /**
-     * Weichzeichnung des fertigen Schattenbildes, in Pixeln der Ausgabe-
-     * Canvas (`outputPixels`) — zusätzlich zur Höhen-Weichzeichnung oben, aber
-     * mit anderem Ziel (14.9.2026, Gerätebefund „Schatten willkürlich" auf
-     * zerklüftetem Gelände). Am Höhendaten-Ausschnitt und am echten Luftbild
-     * bestätigt: die einzelnen Flecken sind reales, sehr feinteiliges Gelände
-     * (Schutthang), kein Rechenfehler — für das Cockpit soll es trotzdem
-     * ruhiger wirken. Wirkt auf das Ergebnis, nicht auf die Höhendaten, ist
-     * also reine Kosmetik und beeinflusst die Schatten-Reichweite nicht.
-     * In Ausgabepixeln statt Metern: die Kante soll unabhängig vom Zoom immer
-     * gleich weich aussehen, nicht wie `heightBlurMeters` mit der realen
-     * Fläche mitskalieren.
+     * Weichzeichnung des fertigen Schattenbildes, in Metern — zusätzlich zur
+     * Höhen-Weichzeichnung oben, aber mit anderem Ziel (14.9.2026,
+     * Gerätebefund „Schatten willkürlich" auf zerklüftetem Gelände). Am
+     * Höhendaten-Ausschnitt und am echten Luftbild bestätigt: die einzelnen
+     * Flecken sind reales, sehr feinteiliges Gelände (Schutthang), kein
+     * Rechenfehler — für das Cockpit soll es trotzdem ruhiger wirken. Wirkt
+     * auf das Ergebnis, nicht auf die Höhendaten, ist also reine Kosmetik
+     * und beeinflusst die Schatten-Reichweite nicht.
+     *
+     * **War zuerst ein fester Pixelwert der Ausgabe-Canvas (6 px) — noch am
+     * selben Tag als Fehler erkannt.** Gerätebefund „Schatten fehlt" auf dem
+     * Üetliberg-Grat: bei starker Kameraneigung kann das Fenster auf über
+     * 60 km aufblähen (siehe `maxVisibleMeters`), und ein fester Pixelradius
+     * entspricht dann über 1 km Realdistanz statt der beabsichtigten
+     * Grössenordnung — genug, um den ganzen nahen Grat unsichtbar zu
+     * verwischen. Ein Meterwert bleibt unabhängig von der Fenstergrösse
+     * gleich stark. 70 m entspricht dem, was die ursprünglichen 6
+     * Ausgabepixel bei einem normalen, rund 18 km breiten Fenster ergaben.
+     *
+     * Auf 20 m gesenkt (14.9.2026, Nutzer: „ich sehe die Grenze nicht") —
+     * zusammen mit dem tieferen `postBlurMaxPixels` auch bei mittleren und
+     * weiten Fenstern eine schärfere Kante.
      */
-    postBlurPixels: 6,
+    postBlurMeters: 20,
+    /**
+     * Deckel für den Blur-Schritt in Ausgabepixeln (14.9.2026, Gerätebefund
+     * „Schatten kaum ersichtlich" bei naher Kamera/engem Fenster). Ein reiner
+     * Meterwert löst das Üetliberg-Problem bei weiten Fenstern, macht den
+     * Radius aber bei einem engen Fenster (z.B. Manuell-Modus, wenige hundert
+     * Meter sichtbar) zu einem unverhältnismässig grossen Bildanteil — der
+     * Schatten verschwamm zu einem diffusen Klecks. `postBlurMeters` und
+     * dieser Pixel-Deckel wirken gemeinsam als Minimum: bei weiten Fenstern
+     * greift der Meterwert, bei engen der Pixel-Deckel. 6 px ist derselbe
+     * Wert, der vor der Meter-Umstellung bereits bewährt war.
+     *
+     * Auf 2 px gesenkt (14.9.2026, Nutzer: „ich sehe die Grenze nicht").
+     */
+    postBlurMaxPixels: 2,
     /**
      * Farbe der Schattenfläche. Reines Schwarz war am Gerät auf Wald-/Felshängen
      * kaum von den echten, zur Aufnahmezeit gehörigen Schatten im Luftbild zu
@@ -278,9 +330,11 @@ export const SHADOW = {
     color: [12, 20, 40],
     /**
      * Deckkraft der Schattenfläche. 0,6 war am Gerät auf dunklem Fels zu
-     * unauffällig (13.9.2026) — auf 0,75 angehoben.
+     * unauffällig (13.9.2026) — auf 0,75 angehoben. Auf 0,85 weiter angehoben
+     * (14.9.2026, Gerätebefund „Schatten kaum ersichtlich" bei naher Kamera) —
+     * mehr Kontrast gegen dunklen Schutthang/Wald.
      */
-    opacity: 0.75,
+    opacity: 0.85,
     /**
      * Nach einer Kamerabewegung oder einer Zeitänderung wird erst nach dieser
      * Ruhezeit neu gerechnet (Höhendaten laden + Verschattung im eigenen

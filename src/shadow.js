@@ -370,7 +370,7 @@ function createComputer(canvasSize) {
          * sie als ImageBitmap zurück (Alpha 0 ausserhalb der Schattenfläche).
          */
         compute({heightsBitmap, gridPixels, uvScale, uvOffset, texelSize, rayStepPixels, maxSteps,
-            metersPerPixel, sunDirX, sunDirY, altitudeRad, night}) {
+            metersPerPixel, sunDirX, sunDirY, altitudeRad, night, opacity, edgeSoftnessRad}) {
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.BLEND);
 
@@ -422,10 +422,10 @@ function createComputer(canvasSize) {
             gl.uniform1f(loc.maxSteps, maxSteps);
             gl.uniform2f(loc.sunDir, sunDirX, sunDirY);
             gl.uniform1f(loc.altitudeRad, altitudeRad);
-            gl.uniform1f(loc.edgeSoftness, SHADOW.edgeSoftnessRad);
+            gl.uniform1f(loc.edgeSoftness, edgeSoftnessRad);
             gl.uniform1f(loc.night, night ? 1 : 0);
             gl.uniform3f(loc.color, SHADOW.color[0] / 255, SHADOW.color[1] / 255, SHADOW.color[2] / 255);
-            gl.uniform1f(loc.opacity, SHADOW.opacity);
+            gl.uniform1f(loc.opacity, opacity);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
             gl.enableVertexAttribArray(loc.pos);
@@ -433,10 +433,25 @@ function createComputer(canvasSize) {
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
             // Nachweichzeichnung auf dem halben Raster (siehe postSize oben):
-            // waagrecht ins erste Zwischenziel, senkrecht ins zweite — die
-            // UV-Schrittweite bleibt auf die volle Canvas bezogen, damit der
-            // wahrgenommene Weichzeichner-Radius unabhängig von `postSize` ist.
-            const step = SHADOW.postBlurPixels / canvasSize;
+            // waagrecht ins erste Zwischenziel, senkrecht ins zweite. Die
+            // Schrittweite ist ein Meterwert, nicht mehr fest in
+            // Ausgabepixeln (14.9.2026, Gerätebefund „Schatten fehlt" auf
+            // dem Üetliberg-Grat): bei stark schwankender Fenstergrösse
+            // (siehe `maxVisibleMeters`) entsprach derselbe Pixel-Radius mal
+            // wenigen, mal über tausend Metern — bei einem 68-km-Fenster
+            // verwischte das den ganzen nahen Grat unsichtbar. `uvScale *
+            // gridPixels * metersPerPixel` ist die reale Breite des
+            // sichtbaren Ausschnitts in Metern, unabhängig von der
+            // Ausgabeauflösung.
+            //
+            // Zusätzlich in Ausgabepixeln gedeckelt (14.9.2026, Gerätebefund
+            // „Schatten kaum ersichtlich" bei naher Kamera/engem Fenster):
+            // der Meterwert allein macht den Radius bei einem engen Fenster
+            // zu einem unverhältnismässig grossen Bildanteil. Meterwert und
+            // Pixel-Deckel wirken als Minimum — bei weiten Fenstern greift
+            // der Meterwert, bei engen der Deckel.
+            const visibleWidthMeters = uvScale * gridPixels * metersPerPixel;
+            const step = Math.min(SHADOW.postBlurMeters / visibleWidthMeters, SHADOW.postBlurMaxPixels / postSize);
             gl.useProgram(postBlurProgram);
             gl.viewport(0, 0, postSize, postSize);
             gl.bindFramebuffer(gl.FRAMEBUFFER, postTargetA.fbo);
@@ -479,6 +494,14 @@ export function createShadow(map, computeShadow) {
     let recomputePromise = Promise.resolve();
     /** Diagnose-/Testzugang: die zuletzt angewendete Bild-URL. */
     let lastImageUrl = null;
+
+    /**
+     * Laufzeit-einstellbar über die Regler im Schatten-Panel (14.9.2026,
+     * Nutzer: „Dunkelheit"/„Rand"-Slider) — Startwert aus `config.js`, danach
+     * überschreibt `setOpacity()`/`setEdgeSoftness()`.
+     */
+    let opacity = SHADOW.opacity;
+    let edgeSoftnessRad = SHADOW.edgeSoftnessRad;
 
     /** Erst bei der ersten Anfrage angelegt (kein WebGL-Kontext für ungenutztes Feature). */
     let computer = null;
@@ -607,8 +630,11 @@ export function createShadow(map, computeShadow) {
         // Höhendaten lesen: `sunDirX`/`night`/... sind gemeinsamer,
         // veränderlicher Zustand — würde eine neuere Anfrage (anderes Datum)
         // dazwischen `updateSun()` aufrufen, rechnete diese Anfrage sonst
-        // versehentlich mit fremdem Sonnenstand weiter.
-        const sunSnapshot = {sunDirX, sunDirY, altitudeRad, night};
+        // versehentlich mit fremdem Sonnenstand weiter. `opacity`/
+        // `edgeSoftnessRad` aus demselben Grund mit eingefangen — ein
+        // Regler-Zug während einer laufenden Berechnung soll diese nicht
+        // mit einem halb neuen, halb alten Stand beenden.
+        const sunSnapshot = {sunDirX, sunDirY, altitudeRad, night, opacity, edgeSoftnessRad};
 
         // Bei einem Fehlschlag (z.B. kurzer Netz-Hänger beim Kachel-Nachladen)
         // ein paar Mal automatisch erneut versuchen, statt die zuletzt gezeigte
@@ -713,6 +739,16 @@ export function createShadow(map, computeShadow) {
         },
         setDate(value) {
             date = value;
+            if (enabled) scheduleRecompute();
+        },
+        /** Regler „Dunkelheit" im Schatten-Panel — 0…1. */
+        setOpacity(value) {
+            opacity = value;
+            if (enabled) scheduleRecompute();
+        },
+        /** Regler „Rand" im Schatten-Panel — Radiant, siehe `edgeSoftnessRad` in `config.js`. */
+        setEdgeSoftness(value) {
+            edgeSoftnessRad = value;
             if (enabled) scheduleRecompute();
         }
     };

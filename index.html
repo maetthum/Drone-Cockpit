@@ -50,6 +50,18 @@
     </label>
     <input id="shadow-datetime" class="shadow-datetime" type="datetime-local"
            aria-label="Datum und Uhrzeit für den Sonnenstand">
+    <div class="camera-row">
+      <span class="anchor-label">Dunkelheit</span>
+      <input id="shadow-opacity" class="anchor-range" type="range" min="0" max="100" step="1" value="85"
+             aria-label="Deckkraft des Geländeschattens">
+      <span id="shadow-opacity-value" class="anchor-value">85 %</span>
+    </div>
+    <div class="camera-row">
+      <span class="anchor-label">Rand</span>
+      <input id="shadow-edge" class="anchor-range" type="range" min="0" max="100" step="1" value="100"
+             aria-label="Schärfe des Schattenrands">
+      <span id="shadow-edge-value" class="anchor-value">100 %</span>
+    </div>
   </div>
   <button id="fullscreen" class="fullscreen" hidden aria-pressed="false"
           aria-label="Vollbild einschalten" title="Vollbild einschalten">
