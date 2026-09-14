@@ -168,6 +168,26 @@ export const SHADOW = {
      */
     edgeSoftnessRad: 0.02,
     /**
+     * Weichzeichnung des Höhenrasters selbst, bevor der Sonnenstrahl-Test
+     * darauf läuft — in Metern, nicht in Texeln (14.9.2026, Gerätebefund:
+     * bei z14 zeigte der Schattenrand deutlich gröbere, gerade Facetten als
+     * bei z12, an derselben Stelle). Ursache: swisstopo liefert ab einer
+     * gewissen Zoomstufe kein wirklich feineres Dreiecksnetz mehr — bei
+     * niedrigem Zoom verteilt sich dieselbe (grobe) Triangulierung über eine
+     * grössere Fläche und wird beim Resampling ins 256×256-Raster automatisch
+     * geglättet, bei hohem Zoom fällt dieselbe Kachel auf eine kleinere
+     * Fläche, und die Rasterpunkte liegen dann oft innerhalb einzelner
+     * grosser Dreiecke — ihre scharfen Kanten schlagen direkt auf den
+     * Schattenrand durch. Ein fester Texel-Radius hätte das falsch herum
+     * skaliert (bei hohem Zoom, wo ein Texel wenig Fläche deckt, zu wenig
+     * geglättet; bei niedrigem Zoom, wo schon geglättet ist, unnötig viel) —
+     * ein Meterwert, durch `metersPerPixel` geteilt, ergibt den passenden
+     * Texel-Radius für die jeweilige Zoomstufe. Rundet auch echte scharfe
+     * Grate leicht ab — ein bewusster kleiner Genauigkeitsverlust zugunsten
+     * der Optik, siehe `shadow.js#BLUR_FRAGMENT_SRC`.
+     */
+    heightBlurMeters: 25,
+    /**
      * Farbe der Schattenfläche. Reines Schwarz war am Gerät auf Wald-/Felshängen
      * kaum von den echten, zur Aufnahmezeit gehörigen Schatten im Luftbild zu
      * unterscheiden. Ein erster Versuch mit Violett (13.9.2026) verschwamm über

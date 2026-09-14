@@ -111,6 +111,57 @@ void main() {
 }
 `;
 
+/**
+ * Weichzeichnet das rohe Höhenraster, bevor der Sonnenstrahl-Test darauf
+ * läuft (14.9.2026, Gerätebefund: bei hohem Zoom zeigte der Schattenrand
+ * grosse, gerade Facetten). Ursache ist nicht die Ausgabeauflösung, sondern
+ * das Quantized-Mesh selbst: swisstopo liefert ab einer gewissen Zoomstufe
+ * kein wirklich feineres Dreiecksnetz mehr — bei niedrigem Zoom verteilt sich
+ * dieselbe (grobe) Triangulierung über eine grössere Fläche und wird beim
+ * Resampling ins 256×256-Raster automatisch geglättet, bei hohem Zoom fällt
+ * dieselbe Kachel auf eine kleinere Fläche, und die Rasterpunkte liegen dann
+ * oft innerhalb einzelner grosser Dreiecke — ihre scharfen Kanten schlagen
+ * direkt auf den Schattenrand durch.
+ *
+ * Läuft als eigener, einmaliger Durchgang statt in der Raycasting-Schleife:
+ * dort würde eine 9-fache Texturabtastung pro Schritt (bis zu 128 Schritte,
+ * jeder Ausgabepixel) die Rechenzeit unnötig vervielfachen, obwohl das
+ * Höhenraster für alle Schritte gleich bleibt.
+ */
+const BLUR_FRAGMENT_SRC = `
+precision highp float;
+varying vec2 v_outputUv;
+uniform sampler2D u_heights;
+uniform float u_texelSize;
+uniform float u_blurTexels;
+
+float decodeHeight(vec2 uv) {
+    vec3 c = texture2D(u_heights, uv).rgb * 255.0;
+    return c.r * 256.0 + c.g + c.b / 256.0 - 32768.0;
+}
+
+// Kehrwert von terrariumPack() in terrain-worker.js.
+vec3 encodeHeight(float h) {
+    float value = floor((h + 32768.0) * 256.0 + 0.5);
+    float r = floor(value / 65536.0);
+    float rest = value - r * 65536.0;
+    float g = floor(rest / 256.0);
+    float b = rest - g * 256.0;
+    return vec3(r, g, b) / 255.0;
+}
+
+void main() {
+    float step = u_texelSize * u_blurTexels;
+    float sum = 0.0;
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            sum += decodeHeight(v_outputUv + vec2(float(dx), float(dy)) * step);
+        }
+    }
+    gl_FragColor = vec4(encodeHeight(sum / 9.0), 1.0);
+}
+`;
+
 function compileShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -123,9 +174,9 @@ function compileShader(gl, type, source) {
     return shader;
 }
 
-function createProgram(gl) {
+function createProgram(gl, fragmentSrc) {
     const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SRC);
-    const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SRC);
+    const fragment = compileShader(gl, gl.FRAGMENT_SHADER, fragmentSrc);
     const program = gl.createProgram();
     gl.attachShader(program, vertex);
     gl.attachShader(program, fragment);
@@ -165,11 +216,18 @@ async function bitmapToDataUrl(bitmap) {
  * MapLibres eigenem Kontext (Kamera, Terrain-Tiefenpuffer) hat das nichts zu
  * tun, deshalb auch keine der drei früheren Kamera-Kalibrierungsprobleme.
  */
-function createComputer(canvasSize, maxSteps) {
+function createComputer(canvasSize, maxSteps, gridPixels) {
     const canvas = new OffscreenCanvas(canvasSize, canvasSize);
     const gl = canvas.getContext('webgl');
     if (!gl) throw new Error('WebGL für Geländeschatten-Berechnung nicht verfügbar');
-    const program = createProgram(gl);
+    const program = createProgram(gl, FRAGMENT_SRC);
+    const blurProgram = createProgram(gl, BLUR_FRAGMENT_SRC);
+    const blurLoc = {
+        heights: gl.getUniformLocation(blurProgram, 'u_heights'),
+        texelSize: gl.getUniformLocation(blurProgram, 'u_texelSize'),
+        blurTexels: gl.getUniformLocation(blurProgram, 'u_blurTexels'),
+        pos: gl.getAttribLocation(blurProgram, 'a_pos')
+    };
     const loc = {
         heights: gl.getUniformLocation(program, 'u_heights'),
         uvScale: gl.getUniformLocation(program, 'u_uvScale'),
@@ -196,22 +254,58 @@ function createComputer(canvasSize, maxSteps) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+    // Zwischenziel des Weichzeichner-Durchgangs — dieselbe Auflösung wie das
+    // geladene Höhenraster, nicht die (meist gröbere) Ausgabe-Canvas.
+    const blurTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, blurTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gridPixels, gridPixels, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    const blurFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, blurFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, blurTexture, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
     return {
         /**
          * Rechnet die Schattenfläche für ein geladenes Höhenraster und gibt
          * sie als ImageBitmap zurück (Alpha 0 ausserhalb der Schattenfläche).
          */
         compute({heightsBitmap, uvScale, uvOffset, texelSize, metersPerPixel, sunDirX, sunDirY, altitudeRad, night}) {
-            gl.viewport(0, 0, canvasSize, canvasSize);
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.BLEND);
+
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, heightsBitmap);
+
+            // Weichzeichner-Durchgang: rohes Höhenraster → `blurTexture`, in
+            // Texeln proportional zur realen Kachelauflösung (siehe
+            // SHADOW.heightBlurMeters) statt einer festen Texelzahl — sonst
+            // würde derselbe Radius bei niedrigem Zoom unnötig viel und bei
+            // hohem Zoom zu wenig glätten.
+            gl.bindFramebuffer(gl.FRAMEBUFFER, blurFbo);
+            gl.viewport(0, 0, gridPixels, gridPixels);
+            gl.useProgram(blurProgram);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.uniform1i(blurLoc.heights, 0);
+            gl.uniform1f(blurLoc.texelSize, texelSize);
+            gl.uniform1f(blurLoc.blurTexels, SHADOW.heightBlurMeters / metersPerPixel);
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+            gl.enableVertexAttribArray(blurLoc.pos);
+            gl.vertexAttribPointer(blurLoc.pos, 2, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvasSize, canvasSize);
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT);
 
             gl.useProgram(program);
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, heightsBitmap);
+            gl.bindTexture(gl.TEXTURE_2D, blurTexture);
             gl.activeTexture(gl.TEXTURE0);
             gl.uniform1i(loc.heights, 0);
             gl.uniform1f(loc.uvScale, uvScale);
@@ -345,7 +439,7 @@ export function createShadow(map, computeShadow) {
         // siehe SHADOW.outputSupersample): die uvScale/uvOffset-Rechnung oben
         // bleibt unverändert texelbasiert, hier wird nur die Anzahl
         // unabhängig entschiedener Ausgabepixel erhöht.
-        if (!computer) computer = createComputer(outputSize * SHADOW.outputSupersample, maxSteps);
+        if (!computer) computer = createComputer(outputSize * SHADOW.outputSupersample, maxSteps, gridPixels);
         const resultBitmap = computer.compute({
             heightsBitmap: bitmap,
             uvScale, uvOffset, texelSize, metersPerPixel,
