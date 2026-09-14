@@ -289,10 +289,22 @@ export function createShadow(map, computeShadow) {
         if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
     }
 
+    /**
+     * Geografischer Punkt, um den das Schattenraster gebaut wird — nicht die
+     * Bildschirmmitte, sondern ein Punkt näher am unteren Bildrand (siehe
+     * `SHADOW.centerScreenFraction`). `unproject()` ist geländebewusst
+     * (berücksichtigt `map.terrain`), liefert hier also den tatsächlichen
+     * Bodenpunkt.
+     */
+    function gridCenter() {
+        const canvas = map.getCanvas();
+        return map.unproject([canvas.clientWidth / 2, canvas.clientHeight * SHADOW.centerScreenFraction]);
+    }
+
     async function recompute() {
         if (!enabled || !computeShadow) return;
         const id = ++requestCounter;
-        const {lng, lat} = map.getCenter();
+        const {lng, lat} = gridCenter();
         // Folgt dem Kamera-Zoom statt fix: dieselbe Kachelzahl deckt bei
         // niedrigerem Zoom automatisch mehr Fläche ab (reale Kachelbreite
         // wächst), ohne mehr Kacheln laden zu müssen.

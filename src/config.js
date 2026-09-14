@@ -104,35 +104,47 @@ export const SHADOW = {
     minGridZoom: 10,
     maxGridZoom: 15,
     /**
-     * Kachelraster um den Kartenmittelpunkt, Radius in Kacheln: 3 ergibt
-     * 7 × 7 = 49 geladene Kacheln.
+     * Kachelraster um den Fensterzentrum (siehe `centerScreenFraction`),
+     * Radius in Kacheln: 2 ergibt 5 × 5 = 25 geladene Kacheln.
+     *
+     * **Kurzzeitig auf 3 erhöht und wieder zurückgenommen (14.9.2026,
+     * Gerätebefund Glarus).** Ein grösseres Fenster (49 Kacheln) sollte das
+     * Problem unten kompensieren, kostete aber gemessen (echtes Netz) 4,4 s
+     * für die erste Berechnung eines neuen Gebiets — bewegt sich die Kamera
+     * in dieser Zeit weiter, verwirft der Debounce das Ergebnis, bevor es
+     * ankommt ("Schatten wird nach kurzer Zeit nicht mehr angezeigt"). Die
+     * eigentliche Ursache (siehe `centerScreenFraction`) beseitigt, statt sie
+     * mit mehr Fläche zu überdecken.
      */
-    gridRadiusTiles: 3,
+    gridRadiusTiles: 2,
     /**
-     * Sichtbarer Ausschnitt in der Mitte des Rasters, Radius in Kacheln: 2
-     * ergibt 5 × 5 = 25 sichtbare Kacheln (rund 4 × 4 km bei Zoom 15). Der
+     * Sichtbarer Ausschnitt in der Mitte des Rasters, Radius in Kacheln: 1
+     * ergibt 3 × 3 = 9 sichtbare Kacheln (rund 2,5 × 2,5 km bei Zoom 15). Der
      * Rand rundherum (`gridRadiusTiles − outputRadiusTiles`, hier eine
      * Kachelbreite) dient nur der Verdeckungsprüfung Richtung Sonne, wird aber
      * nicht angezeigt.
-     *
-     * **Von 1 auf 2 erhöht (14.9.2026, Gerätebefund Glarus).** Das Fenster
-     * wird um `map.getCenter()` gebaut — bei starker Kameraneigung liegt
-     * dieser Punkt (Bildschirmmitte) geografisch oft weit vom Gelände am
-     * *unteren* Bildrand entfernt, dem in einer flachen FPV-Ansicht
-     * nächstgelegenen. Bei einer Kopfdrehung wanderte dieser Punkt so weit,
-     * dass der nahe Vordergrund ausserhalb des Fensters fiel und bis zur
-     * nächsten Neuberechnung unverschattet blieb — im Video sichtbar als
-     * "Schatten je nach Blickwinkel weg". Ein grösseres Fenster verkleinert
-     * das Risiko, behebt es aber nicht grundsätzlich (siehe bekannte Grenze
-     * unten); die naheliegendere Lösung — das Fenster um einen kameranahen
-     * statt um den Bildschirm-Mittelpunkt zu zentrieren — wäre ein grösserer
-     * Eingriff und blieb bewusst zurückgestellt.
      *
      * **Bekannte Grenze:** ein Gipfel ausserhalb dieses Rands wird nicht
      * berücksichtigt, auch wenn er in Wirklichkeit einen Schatten bis hierher
      * würfe.
      */
-    outputRadiusTiles: 2,
+    outputRadiusTiles: 1,
+    /**
+     * Wo auf dem Bildschirm der Punkt liegt, um den das Fenster gebaut wird —
+     * 0 die Bildschirmmitte (`map.getCenter()`), 1 der untere Bildrand.
+     * 0,75 (14.9.2026, Gerätebefund Glarus): bei starker Kameraneigung liegt
+     * die Bildschirmmitte geografisch oft weit vom Gelände am *unteren*
+     * Bildrand entfernt, dem in einer flachen FPV-Ansicht nächstgelegenen —
+     * eine Kopfdrehung liess diesen Mittelpunkt so weit wandern, dass der
+     * nahe Vordergrund aus dem Fenster fiel und bis zur nächsten
+     * Neuberechnung unverschattet blieb. Nicht 1,0 (der Bildrand selbst):
+     * dort wäre das Fenster so nah an der Kamera zentriert, dass es kaum
+     * noch in die Ferne reicht, die im oberen Bildbereich ja auch sichtbar
+     * ist. `map.unproject()` ist geländebewusst (berücksichtigt
+     * `map.terrain`) und liefert damit den tatsächlichen Bodenpunkt, nicht
+     * den Schnittpunkt mit der Ellipsoid-Nullfläche.
+     */
+    centerScreenFraction: 0.75,
     /** Schrittweite beim Abschreiten des Sonnenstrahls, in Pixeln des Rasters. */
     rayStepPixels: 2,
     /**
