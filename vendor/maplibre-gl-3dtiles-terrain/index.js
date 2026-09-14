@@ -5,6 +5,19 @@
 // irregular TIN onto a regular grid and terrarium-packed, so map.setTerrain(),
 // queryTerrainElevation(), hillshade and 2D-layer draping work with no core
 // changes. See MAPLIBRE-PLUGIN-3DTILES.md for the design.
+//
+// LOKALER PATCH (14.9.2026) — sonst wird `vendor/` in diesem Projekt nicht
+// angefasst; bei einem Update des Plugins muss er neu angebracht werden:
+// `MAX_SOURCE_TILES` (war als Literal 6 in `findCoveringQMTiles()`) auf 9
+// angehoben. Grund: eine geografisch passende Mesh-Stufe braucht je nach
+// Kachel-Ausrichtung 4 bis 9 Quellkacheln, der Deckel von 6 lag also mitten
+// in diesem Bereich und verwarf die passende Stufe je nach Ort und Zoom
+// willkürlich. Am Geländeschatten gemessen (Türlersee-Gebiet): bei Mercator
+// z14 brauchte die passende Stufe QM14 neun Kacheln, wurde verworfen, und
+// das gröbere QM13 lieferte 226 m statt 87 m Dreieckskantenlänge — bei einer
+// Rasterzelle von 6,5 m deckte ein Dreieck damit 35 statt 13 Rasterzellen ab
+// und seine Facetten schlugen sichtbar auf den Schattenrand durch.
+const MAX_SOURCE_TILES = 9;
 
 const DEFAULT_TILE_SIZE = 256;
 const DEFAULT_FALLBACK_HEIGHT = 1500;
@@ -131,7 +144,7 @@ function geographicFallbackHeight(lng, lat, coveringMeshes, bounds, fadeDistance
 
 // Available tiles intersecting the requested bounds, deepest zoom first,
 // from layer.json's per-zoom `available` rectangles. Gaps at one zoom
-// stack over lower-zoom parents. Zooms needing more than 6 source tiles
+// stack over lower-zoom parents. Zooms needing more than MAX_SOURCE_TILES
 // for one output tile are skipped: the output cannot express their
 // resolution, and a full pyramid would fan out into hundreds of fetches.
 function qmTileRange(z, bounds) {
@@ -169,7 +182,7 @@ function findCoveringQMTiles(available, mercatorBounds) {
         if (rectangles.length === 0) continue;
         coarsestWithData = qz;
         const range = qmTileRange(qz, mercatorBounds);
-        if ((range.xMax - range.xMin + 1) * (range.yMax - range.yMin + 1) > 6) continue;
+        if ((range.xMax - range.xMin + 1) * (range.yMax - range.yMin + 1) > MAX_SOURCE_TILES) continue;
         if (collectAvailableTiles(rectangles, qz, range, mercatorBounds, covering) && covering.length > 0) {
             return covering;
         }

@@ -170,21 +170,28 @@ export const SHADOW = {
     /**
      * Weichzeichnung des Höhenrasters selbst, bevor der Sonnenstrahl-Test
      * darauf läuft — in Metern, nicht in Texeln (14.9.2026, Gerätebefund:
-     * bei z14 zeigte der Schattenrand deutlich gröbere, gerade Facetten als
-     * bei z12, an derselben Stelle). Ursache: swisstopo liefert ab einer
-     * gewissen Zoomstufe kein wirklich feineres Dreiecksnetz mehr — bei
-     * niedrigem Zoom verteilt sich dieselbe (grobe) Triangulierung über eine
-     * grössere Fläche und wird beim Resampling ins 256×256-Raster automatisch
-     * geglättet, bei hohem Zoom fällt dieselbe Kachel auf eine kleinere
-     * Fläche, und die Rasterpunkte liegen dann oft innerhalb einzelner
-     * grosser Dreiecke — ihre scharfen Kanten schlagen direkt auf den
-     * Schattenrand durch. Ein fester Texel-Radius hätte das falsch herum
-     * skaliert (bei hohem Zoom, wo ein Texel wenig Fläche deckt, zu wenig
-     * geglättet; bei niedrigem Zoom, wo schon geglättet ist, unnötig viel) —
+     * bei z14 zeigte der Schattenrand deutlich gröbere Facetten als bei z12
+     * an derselben Stelle).
+     *
+     * **Achtung, die erste Begründung hier war falsch** und ist nach einer
+     * Messung an echten swisstopo-Daten ersetzt: es hiess, swisstopo liefere
+     * ab einer gewissen Zoomstufe kein feineres Dreiecksnetz mehr. Das
+     * stimmt nicht — die Kantenlänge sinkt durchgehend bis Stufe 17 (am
+     * Testpunkt 47.344/8.412: 349 m bei QM12, 226 m bei QM13, 87 m bei QM14,
+     * 33 m bei QM15, 7 m bei QM17). Die echte Ursache lag im Terrain-Plugin
+     * und ist dort behoben (siehe `MAX_SOURCE_TILES` in
+     * `vendor/maplibre-gl-3dtiles-terrain/index.js`): sein Deckel von 6
+     * Quellkacheln verwarf bei Mercator z14 die passende Mesh-Stufe, weil
+     * die dort neun Kacheln gebraucht hätte.
+     *
+     * Die Weichzeichnung bleibt als **Kantenglättung**, nicht als Fix für
+     * die Facetten: sie rundet die Dreieckskanten im Höhenraster ab, damit
+     * einzelne Knicke nicht als gerade Linien im Schattenrand stehen. Ein
+     * fester Texel-Radius hätte falsch skaliert (bei hohem Zoom, wo ein
+     * Texel wenig Fläche deckt, zu wenig; bei niedrigem Zoom unnötig viel) —
      * ein Meterwert, durch `metersPerPixel` geteilt, ergibt den passenden
-     * Texel-Radius für die jeweilige Zoomstufe. Rundet auch echte scharfe
-     * Grate leicht ab — ein bewusster kleiner Genauigkeitsverlust zugunsten
-     * der Optik, siehe `shadow.js#BLUR_FRAGMENT_SRC`.
+     * Texel-Radius je Zoomstufe. Rundet auch echte scharfe Grate leicht ab,
+     * ein bewusster kleiner Genauigkeitsverlust zugunsten der Optik.
      */
     heightBlurMeters: 25,
     /**

@@ -114,14 +114,11 @@ void main() {
 /**
  * Weichzeichnet das rohe Höhenraster, bevor der Sonnenstrahl-Test darauf
  * läuft (14.9.2026, Gerätebefund: bei hohem Zoom zeigte der Schattenrand
- * grosse, gerade Facetten). Ursache ist nicht die Ausgabeauflösung, sondern
- * das Quantized-Mesh selbst: swisstopo liefert ab einer gewissen Zoomstufe
- * kein wirklich feineres Dreiecksnetz mehr — bei niedrigem Zoom verteilt sich
- * dieselbe (grobe) Triangulierung über eine grössere Fläche und wird beim
- * Resampling ins 256×256-Raster automatisch geglättet, bei hohem Zoom fällt
- * dieselbe Kachel auf eine kleinere Fläche, und die Rasterpunkte liegen dann
- * oft innerhalb einzelner grosser Dreiecke — ihre scharfen Kanten schlagen
- * direkt auf den Schattenrand durch.
+ * grosse, gerade Facetten). Glättet die Dreieckskanten des Quantized-Mesh,
+ * die sonst als gerade Knicke im Schattenrand stehen — die eigentliche
+ * Ursache der groben Facetten lag aber im Kachel-Deckel des Terrain-Plugins
+ * und ist dort behoben (siehe `MAX_SOURCE_TILES` dort sowie
+ * SHADOW.heightBlurMeters in config.js für die widerlegte Erstvermutung).
  *
  * Läuft als eigener, einmaliger Durchgang statt in der Raycasting-Schleife:
  * dort würde eine 9-fache Texturabtastung pro Schritt (bis zu 128 Schritte,
