@@ -151,8 +151,26 @@ export const SHADOW = {
      * derart grobes Fenster ist auch für sich unnötig — 15 km deckt die
      * meisten Kameralagen weiterhin bis zum sichtbaren Horizont ab und
      * halbiert das ungünstigste Fenster auf rund 38 km.
+     *
+     * **Auf 60 km angehoben (14.9.2026, Nutzer: „Schatten ist nicht
+     * bildschirmfüllend").** Bei fast senkrechter Kamera (Pitch nahe 0) und
+     * niedrigem Zoom ist die sichtbare Fläche real riesig (über 100 km
+     * Bildbreite bei z10) — hier greift der Deckel nicht als Ausnahme für
+     * Horizont-Ausreisser, sondern regulär und schneidet den Schatten mitten
+     * im Bild ab. Die Ursache des Üetliberg-Befunds (feste
+     * Pixel-Nachweichzeichnung) ist seither behoben (siehe `postBlurMeters`),
+     * ein höherer Deckel holt den alten Bug also nicht zurück. Bleibt trotzdem
+     * ein Deckel, nicht unbegrenzt: ganz Kantone berechnen (extremes
+     * Rauszoomen am Desktop, weit jenseits jeder Flughöhe) würde Ladezeit und
+     * Auflösung sprengen.
+     *
+     * **Auf 150 km weiter angehoben (14.9.2026)** — 60 km deckte die
+     * getestete fast senkrechte Desktop-Ansicht (z10) immer noch nicht ab.
+     * „Für den Moment" (Nutzer) — falls das bei realistischeren
+     * Cockpit-Blickwinkeln unnötig Ladezeit kostet, ist das die erste
+     * Stellschraube.
      */
-    maxVisibleMeters: 15000,
+    maxVisibleMeters: 150000,
     /**
      * Untergrenze derselben Messung. Fängt den Fall ab, dass alle
      * Abtastpunkte fast auf dem Fensterzentrum landen (sehr steile Kamera,
@@ -242,16 +260,29 @@ export const SHADOW = {
      *
      * Auf 0,0015 weiter gesenkt und zugleich zum Laufzeit-Regler geworden
      * (14.9.2026, Nutzer: „Rand noch klarer. Auch ein Slider") — dieser Wert
-     * ist jetzt das scharfe Ende des Reglers (100 %), `setEdgeSoftness()` in
-     * `shadow.js` überschreibt ihn zur Laufzeit.
+     * war zunächst das scharfe Ende des Reglers (100 %), `setEdgeSoftness()`
+     * in `shadow.js` überschreibt ihn zur Laufzeit.
+     *
+     * **Jetzt die Mitte (50 %) des Reglers** (14.9.2026, Nutzer: „bin ich bei
+     * 100% als bester Wert, nimm das auch als Mitte der Skala") — weiches und
+     * scharfes Ende liegen auf der Logarithmus-Skala symmetrisch um diesen
+     * Wert, siehe `edgeSoftnessMinRad`/`edgeSoftnessMaxRad`.
      */
     edgeSoftnessRad: 0.0015,
     /**
-     * Weiches Ende desselben Reglers (0 %) — der ursprüngliche, bewusst
+     * Weiches Ende des Rand-Reglers (0 %) — der ursprüngliche, bewusst
      * „ruhig" gewählte Wert vom Vormittag des 14.9.2026, für den Fall, dass
      * die scharfe Kante am Gerät wieder das Sägezahnmuster zeigt.
      */
     edgeSoftnessMaxRad: 0.02,
+    /**
+     * Scharfes Ende des Rand-Reglers (100 %) — auf der Logarithmus-Skala
+     * symmetrisch zu `edgeSoftnessMaxRad` um `edgeSoftnessRad` herum
+     * (14.9.2026, Nutzer: „nimm das auch als Mitte der Skala"): deutlich
+     * schärfer als der bisherige Bestwert, für den Fall, dass am Gerät noch
+     * mehr geht.
+     */
+    edgeSoftnessMinRad: 0.0001125,
     /**
      * Weichzeichnung des Höhenrasters selbst, bevor der Sonnenstrahl-Test
      * darauf läuft — in Metern, nicht in Texeln (14.9.2026, Gerätebefund:
@@ -332,9 +363,22 @@ export const SHADOW = {
      * Deckkraft der Schattenfläche. 0,6 war am Gerät auf dunklem Fels zu
      * unauffällig (13.9.2026) — auf 0,75 angehoben. Auf 0,85 weiter angehoben
      * (14.9.2026, Gerätebefund „Schatten kaum ersichtlich" bei naher Kamera) —
-     * mehr Kontrast gegen dunklen Schutthang/Wald.
+     * mehr Kontrast gegen dunklen Schutthang/Wald. Auf 0,92 weiter angehoben
+     * (14.9.2026, Nutzer nach Regler-Test: „ist bei 92% am festen") — dieser
+     * Wert ist jetzt zugleich die Mitte (50 %) des Dunkelheit-Reglers, siehe
+     * `opacitySliderSpan`.
      */
-    opacity: 0.85,
+    opacity: 0.92,
+    /**
+     * Spannweite des Dunkelheit-Reglers um `opacity` herum — Regler-Mitte
+     * (50 %) ergibt exakt `opacity`, die Enden `opacity ± opacitySliderSpan`
+     * (14.9.2026, Nutzer: „nimm das auch als Mitte der Skala"). Oben durch die
+     * physikalische Deckkraft-Grenze von 1 gekappt, das oberste Stück des
+     * Reglers wirkt sich daher nicht mehr sichtbar aus — bewusst in Kauf
+     * genommen, damit die Mitte exakt auf dem eingependelten Wert liegt statt
+     * am oberen Rand.
+     */
+    opacitySliderSpan: 0.15,
     /**
      * Nach einer Kamerabewegung oder einer Zeitänderung wird erst nach dieser
      * Ruhezeit neu gerechnet (Höhendaten laden + Verschattung im eigenen

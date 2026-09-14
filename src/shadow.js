@@ -69,9 +69,10 @@ uniform vec3 u_color;
 uniform float u_opacity;
 
 // Terrarium-Kodierung wie in terrain-worker.js: height = R*256 + G + B/256 - 32768.
-// Hardware-bilineares Sampling auf den kodierten Bytes statt exaktem Bilinear
-// auf dekodierten Metern — dieselbe Näherung, die MapLibre selbst für sein
-// Hillshading auf raster-dem-Kacheln macht.
+// u_heights ist auf NEAREST gestellt (siehe createComputer) — Hardware-
+// Bilinear auf den kodierten Bytes blendet keine Meter, sondern zerstört die
+// Kodierung an Kanalgrenzen (bis zu 128 m Höhenfehler, 14.9.2026 als
+// zoomabhängig unterschiedliches Schattenbild aufgefallen).
 float decodeHeight(vec2 uv) {
     vec3 c = texture2D(u_heights, uv).rgb * 255.0;
     return c.r * 256.0 + c.g + c.b / 256.0 - 32768.0;
@@ -301,21 +302,29 @@ function createComputer(canvasSize) {
     const quadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    // NEAREST statt LINEAR: das sind Terrarium-kodierte Höhenbytes (R zählt
+    // in 256-m-Schritten), keine Farbwerte — Hardware-Bilinear zwischen zwei
+    // Texeln blendet die rohen Bytes, nicht die dekodierten Meter, und kann
+    // an einer Kanalgrenze Höhen-Ausreisser von über 100 m erzeugen (dieselbe
+    // Falle, vor der `terrain-worker.js` beim Kachel-Blit bereits ausweicht).
+    // Fiel am Gerät als zoomabhängig unterschiedliches, unruhiges Schattenbild
+    // über flachem Gelände neben steilem Hang auf (14.9.2026).
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     // Zwischenziel des Weichzeichner-Durchgangs — dieselbe Auflösung wie das
     // geladene Höhenraster, nicht die Ausgabe-Canvas. Die Rastergrösse ändert
     // sich seit dem stufenlosen Umbau mit der Sichtweite, die Textur wird
-    // daher bei Bedarf neu angelegt.
+    // daher bei Bedarf neu angelegt. Ebenfalls Terrarium-kodiert (Ziel von
+    // `BLUR_FRAGMENT_SRC`) — NEAREST aus demselben Grund wie oben.
     const blurTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, blurTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     const blurFbo = gl.createFramebuffer();
@@ -370,7 +379,7 @@ function createComputer(canvasSize) {
          * sie als ImageBitmap zurück (Alpha 0 ausserhalb der Schattenfläche).
          */
         compute({heightsBitmap, gridPixels, uvScale, uvOffset, texelSize, rayStepPixels, maxSteps,
-            metersPerPixel, sunDirX, sunDirY, altitudeRad, night, opacity, edgeSoftnessRad}) {
+            metersPerPixel, sunDirX, sunDirY, altitudeRad, night, opacity, edgeSoftnessRad, postBlurScale}) {
             gl.disable(gl.DEPTH_TEST);
             gl.disable(gl.BLEND);
 
@@ -450,8 +459,16 @@ function createComputer(canvasSize) {
             // zu einem unverhältnismässig grossen Bildanteil. Meterwert und
             // Pixel-Deckel wirken als Minimum — bei weiten Fenstern greift
             // der Meterwert, bei engen der Deckel.
+            // `postBlurScale` (Rand-Regler, obere Hälfte) fährt diesen
+            // Durchgang zusätzlich bis auf 0 herunter — sonst setzte der
+            // feste Deckel eine Untergrenze, die `edgeSoftnessRad` allein
+            // nicht mehr unterschreiten konnte (14.9.2026, Nutzer: „Rand-
+            // Slider ändert nichts zwischen 50-100%"). Bei Schritt 0 tastet
+            // der Kernel unten neunmal denselben Texel ab, die Gewichte
+            // summieren sich zu 1 — unverändertes Bild, echtes Aus.
             const visibleWidthMeters = uvScale * gridPixels * metersPerPixel;
-            const step = Math.min(SHADOW.postBlurMeters / visibleWidthMeters, SHADOW.postBlurMaxPixels / postSize);
+            const step = postBlurScale
+                * Math.min(SHADOW.postBlurMeters / visibleWidthMeters, SHADOW.postBlurMaxPixels / postSize);
             gl.useProgram(postBlurProgram);
             gl.viewport(0, 0, postSize, postSize);
             gl.bindFramebuffer(gl.FRAMEBUFFER, postTargetA.fbo);
@@ -502,6 +519,15 @@ export function createShadow(map, computeShadow) {
      */
     let opacity = SHADOW.opacity;
     let edgeSoftnessRad = SHADOW.edgeSoftnessRad;
+    /**
+     * Skaliert den Nachweichzeichner-Durchgang übers fertige Bild (1 = voll,
+     * 0 = ganz aus) — sonst setzte der feste `postBlurMeters`/
+     * `postBlurMaxPixels`-Durchgang eine Untergrenze, die `edgeSoftnessRad`
+     * im oberen Reglerbereich gar nicht mehr unterschreiten konnte (14.9.2026,
+     * Nutzer: „Rand-Slider ändert nichts zwischen 50-100%"). Siehe
+     * `edgeFromSlider`/`postBlurScaleFromSlider` in `main.js`.
+     */
+    let postBlurScale = 1;
 
     /** Erst bei der ersten Anfrage angelegt (kein WebGL-Kontext für ungenutztes Feature). */
     let computer = null;
@@ -634,7 +660,7 @@ export function createShadow(map, computeShadow) {
         // `edgeSoftnessRad` aus demselben Grund mit eingefangen — ein
         // Regler-Zug während einer laufenden Berechnung soll diese nicht
         // mit einem halb neuen, halb alten Stand beenden.
-        const sunSnapshot = {sunDirX, sunDirY, altitudeRad, night, opacity, edgeSoftnessRad};
+        const sunSnapshot = {sunDirX, sunDirY, altitudeRad, night, opacity, edgeSoftnessRad, postBlurScale};
 
         // Bei einem Fehlschlag (z.B. kurzer Netz-Hänger beim Kachel-Nachladen)
         // ein paar Mal automatisch erneut versuchen, statt die zuletzt gezeigte
@@ -739,7 +765,15 @@ export function createShadow(map, computeShadow) {
         },
         setDate(value) {
             date = value;
-            if (enabled) scheduleRecompute();
+            // Ohne dies blieb die Sonnenrichtung auf dem Stand von
+            // `setEnabled(true)` eingefroren — ein Datum-/Zeitwechsel löste
+            // zwar eine Neuberechnung aus, aber mit der alten Sonne (14.9.2026,
+            // Nutzer: „ich muss immer Geländeschatten aus und einschalten,
+            // bis es aktualisiert wird").
+            if (enabled) {
+                updateSun();
+                scheduleRecompute();
+            }
         },
         /** Regler „Dunkelheit" im Schatten-Panel — 0…1. */
         setOpacity(value) {
@@ -749,6 +783,11 @@ export function createShadow(map, computeShadow) {
         /** Regler „Rand" im Schatten-Panel — Radiant, siehe `edgeSoftnessRad` in `config.js`. */
         setEdgeSoftness(value) {
             edgeSoftnessRad = value;
+            if (enabled) scheduleRecompute();
+        },
+        /** Regler „Rand" im Schatten-Panel, oberer Bereich — 1 = voller Nachweichzeichner, 0 = aus. */
+        setPostBlurScale(value) {
+            postBlurScale = value;
             if (enabled) scheduleRecompute();
         }
     };

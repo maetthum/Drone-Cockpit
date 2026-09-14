@@ -64,7 +64,9 @@ const els = {
     shadowToggle: document.getElementById('shadow-toggle'),
     shadowPanel: document.getElementById('shadow-panel'),
     shadowEnable: document.getElementById('shadow-enable'),
-    shadowDatetime: document.getElementById('shadow-datetime'),
+    shadowDate: document.getElementById('shadow-date'),
+    shadowTime: document.getElementById('shadow-time'),
+    shadowTimeValue: document.getElementById('shadow-time-value'),
     shadowOpacity: document.getElementById('shadow-opacity'),
     shadowOpacityValue: document.getElementById('shadow-opacity-value'),
     shadowEdge: document.getElementById('shadow-edge'),
@@ -79,6 +81,25 @@ const STATUS_TEXT = {
 };
 
 const HEADING_SOURCE_TEXT = {gps: 'GPS', compass: 'Kompass'};
+
+/**
+ * Panels, die ein Klick ausserhalb schliesst (14.9.2026, Nutzer: „Klick
+ * ausserhalb aller Menüs führt zum Schliessen dieses"). Wird von
+ * `buildLayerPanel()` und `main()` befüllt, ein einziger Listener in
+ * `main()` wertet es aus — Reihenfolge egal, da erst beim tatsächlichen
+ * Klick gelesen.
+ */
+const AUSSEN_SCHLIESSBAR = [];
+
+/**
+ * Verhindert, dass derselbe Klick, der gerade ein Panel aussenseitig
+ * geschlossen hat, im selben Zug ein anderes öffnet — z.B. beim Klick auf
+ * einen fremden Anfasser, während ein Panel offen steht (14.9.2026, Nutzer:
+ * „Klick neben ein Menü darf nicht direkt ein neues öffnen, sondern nur das
+ * bereits offene schliessen"). Wird beim Schliessen gesetzt, von jedem
+ * Anfasser vor dem Öffnen geprüft, und nach jedem Klick zurückgesetzt.
+ */
+let unterdrueckeOeffnen = false;
 
 let bannerTimer = null;
 /**
@@ -274,8 +295,16 @@ function buildLayerPanel(overlays, obstacles, radar) {
 
     els.layersToggle.addEventListener('click', () => {
         const open = els.layersPanel.hidden;
+        if (unterdrueckeOeffnen && open) return;
         els.layersPanel.hidden = !open;
         els.layersToggle.setAttribute('aria-expanded', String(open));
+    });
+    AUSSEN_SCHLIESSBAR.push({
+        panel: els.layersPanel, toggle: els.layersToggle,
+        schliessen: () => {
+            els.layersPanel.hidden = true;
+            els.layersToggle.setAttribute('aria-expanded', 'false');
+        }
     });
 
     /** Markiert einen Layer, der keine Kacheln liefert — meist eine falsche ID. */
@@ -604,7 +633,11 @@ async function main() {
             toggle.title = offen ? nameZu : nameAuf;
         };
         setzen(false);
-        toggle.addEventListener('click', () => setzen(panel.hidden));
+        toggle.addEventListener('click', () => {
+            if (unterdrueckeOeffnen && panel.hidden) return;
+            setzen(panel.hidden);
+        });
+        AUSSEN_SCHLIESSBAR.push({panel, toggle, schliessen: () => setzen(false)});
     }
 
     verbindePanel(els.quellenToggle, els.quellen, 'Quellen einblenden', 'Quellen ausblenden');
@@ -887,38 +920,99 @@ async function main() {
 
     els.shadowToggle.addEventListener('click', () => {
         const open = els.shadowPanel.hidden;
+        if (unterdrueckeOeffnen && open) return;
         els.shadowPanel.hidden = !open;
         els.shadowToggle.setAttribute('aria-expanded', String(open));
     });
-    // Lokale Zeit fürs `datetime-local`-Feld: `toISOString()` liefert UTC, das
-    // Feld erwartet aber die Wanduhrzeit ohne Zeitzone.
+    AUSSEN_SCHLIESSBAR.push({
+        panel: els.shadowPanel, toggle: els.shadowToggle,
+        schliessen: () => {
+            els.shadowPanel.hidden = true;
+            els.shadowToggle.setAttribute('aria-expanded', 'false');
+        }
+    });
+    // Capture-Phase: greift auch, wenn ein innerer Klick-Handler die
+    // Ausbreitung stoppt. Der jeweilige Anfasser zählt nicht als „aussen" —
+    // sonst schlösse dieser Listener das Panel eine Zeile vor dem eigenen
+    // Toggle-Klick wieder, der es gerade erst geöffnet hat.
+    document.addEventListener('pointerdown', (event) => {
+        for (const {panel, toggle, schliessen} of AUSSEN_SCHLIESSBAR) {
+            if (panel.hidden) continue;
+            if (panel.contains(event.target) || toggle.contains(event.target)) continue;
+            schliessen();
+            unterdrueckeOeffnen = true;
+        }
+    }, true);
+    // Räumt die Unterdrückung nach dem Klick wieder auf, der sie ausgelöst
+    // hat — Bubble-Phase, läuft also erst nach dem eigenen Klick-Handler
+    // eines Anfassers.
+    document.addEventListener('click', () => { unterdrueckeOeffnen = false; });
+    /**
+     * Datum separat vom Zeit-Regler, weil es selten geändert wird — nur die
+     * Uhrzeit soll sich schnell durchscrubben lassen (14.9.2026, Nutzer:
+     * „Zeiteinstellung ist nicht sehr intuitiv"). `toISOString()` liefert
+     * UTC, das `date`-Feld erwartet aber das lokale Datum.
+     */
     const jetztLokal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
-    els.shadowDatetime.value = jetztLokal.toISOString().slice(0, 16);
+    els.shadowDate.value = jetztLokal.toISOString().slice(0, 10);
+    els.shadowTime.value = String(jetztLokal.getUTCHours() * 60 + jetztLokal.getUTCMinutes());
+    const timeText = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+    els.shadowTimeValue.textContent = timeText(Number(els.shadowTime.value));
     els.shadowEnable.addEventListener('change', () => shadow.setEnabled(els.shadowEnable.checked));
-    els.shadowDatetime.addEventListener('change', () => {
-        if (els.shadowDatetime.value) shadow.setDate(new Date(els.shadowDatetime.value));
+    function shadowDateFromInputs() {
+        if (!els.shadowDate.value) return null;
+        const minutes = Number(els.shadowTime.value);
+        const date = new Date(`${els.shadowDate.value}T00:00`);
+        date.setMinutes(minutes);
+        return date;
+    }
+    els.shadowDate.addEventListener('change', () => {
+        const date = shadowDateFromInputs();
+        if (date) shadow.setDate(date);
+    });
+    els.shadowTime.addEventListener('input', () => {
+        els.shadowTimeValue.textContent = timeText(Number(els.shadowTime.value));
+        const date = shadowDateFromInputs();
+        if (date) shadow.setDate(date);
     });
 
-    // Dunkelheit-Regler: linear, 0–100 % direkt auf die Deckkraft (0…1).
-    els.shadowOpacity.value = String(Math.round(SHADOW.opacity * 100));
-    els.shadowOpacityValue.textContent = `${els.shadowOpacity.value} %`;
+    /**
+     * Dunkelheit-Regler: linear über `opacitySliderSpan` um `opacity` herum,
+     * Reglermitte (50 %) ergibt also exakt den eingependelten Wert. Anzeige
+     * zeigt wie beim Rand-Regler die rohe Reglerposition, nicht die
+     * tatsächliche Deckkraft (14.9.2026, Nutzer: „sollen aber wieder von
+     * 0-100% anzeigen, nur der Wert im Hintergrund muss anders sein") — nur
+     * die Zuordnung dahinter ist neu zentriert, nicht die Anzeige.
+     */
+    const opacityFromSlider = (value) => SHADOW.opacity - SHADOW.opacitySliderSpan
+        + 2 * SHADOW.opacitySliderSpan * (Number(value) / 100);
+    els.shadowOpacity.value = '50';
+    els.shadowOpacityValue.textContent = '50 %';
     els.shadowOpacity.addEventListener('input', () => {
-        shadow.setOpacity(Number(els.shadowOpacity.value) / 100);
+        shadow.setOpacity(opacityFromSlider(els.shadowOpacity.value));
         els.shadowOpacityValue.textContent = `${els.shadowOpacity.value} %`;
     });
 
     /**
      * Rand-Regler: logarithmisch wie der Höhenregler, 0 % = weich
-     * (`edgeSoftnessMaxRad`), 100 % = scharf (`edgeSoftnessRad`) — die
-     * meiste Reglerbewegung soll im scharfen Bereich etwas bewirken, statt
-     * dort auf den letzten paar Prozent zusammengequetscht zu sein.
+     * (`edgeSoftnessMaxRad`), 100 % = scharf (`edgeSoftnessMinRad`),
+     * Reglermitte (50 %) ergibt exakt `edgeSoftnessRad` — den eingependelten
+     * Wert (14.9.2026, Nutzer: „nimm das auch als Mitte der Skala").
+     *
+     * Zusätzlich steuert die obere Hälfte (50–100 %) den Nachweichzeichner
+     * übers fertige Bild herunter, unten unverändert bei voller Stärke
+     * (14.9.2026, Nutzer: „Rand-Slider ändert nichts zwischen 50-100%") —
+     * ohne das dominierte der feste Nachweichzeichner-Deckel jede
+     * Verschärfung von `edgeSoftnessRad` in diesem Bereich.
      */
     const edgeFromSlider = (value) => SHADOW.edgeSoftnessMaxRad
-        * (SHADOW.edgeSoftnessRad / SHADOW.edgeSoftnessMaxRad) ** (Number(value) / 100);
-    els.shadowEdge.value = '100';
-    els.shadowEdgeValue.textContent = '100 %';
+        * (SHADOW.edgeSoftnessMinRad / SHADOW.edgeSoftnessMaxRad) ** (Number(value) / 100);
+    const postBlurScaleFromSlider = (value) => Math.min(1, (100 - Number(value)) / 50);
+    els.shadowEdge.value = '50';
+    els.shadowEdgeValue.textContent = '50 %';
     els.shadowEdge.addEventListener('input', () => {
         shadow.setEdgeSoftness(edgeFromSlider(els.shadowEdge.value));
+        shadow.setPostBlurScale(postBlurScaleFromSlider(els.shadowEdge.value));
         els.shadowEdgeValue.textContent = `${els.shadowEdge.value} %`;
     });
 

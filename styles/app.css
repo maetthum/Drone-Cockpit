@@ -382,6 +382,11 @@ html, body {
 .anchor-range { width: 110px; accent-color: var(--fg); }
 .anchor-value { color: var(--fg); font-size: 11px; min-width: 62px; }
 
+/* „Dunkelheit" ist deutlich länger als „Vor"/„Höhe" im Kamera-Panel — ohne
+   diese Breite sitzt nur die Dunkelheit-Zeile weiter rechts als die Rand-
+   Zeile darunter (14.9.2026, Gerätebefund „Fensterbreite passt nicht"). */
+.shadow-panel .anchor-label { min-width: 78px; }
+
 /* Zwei Modi statt eines Schalters: im Fahrzeug muss auf einen Blick klar sein,
    ob die Karte gerade selbst führt oder dem Finger gehört. */
 .modes {
@@ -476,6 +481,12 @@ html, body {
     display: grid;
     gap: 10px;
 }
+
+/* Grid-Kinder dürfen sonst nicht unter ihre intrinsische Inhaltsbreite
+   schrumpfen — betraf zuerst das Datumsfeld, aber strukturell auch die
+   Regler-Zeilen (14.9.2026, Gerätebefund „Datumfeldrahmen ist immer noch zu
+   breit" nach einem auf `.shadow-datetime` beschränkten ersten Versuch). */
+.shadow-panel > * { min-width: 0; }
 
 .shadow-panel[hidden] { display: none; }
 
