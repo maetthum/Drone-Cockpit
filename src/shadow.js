@@ -295,18 +295,25 @@ export function createShadow(map, computeShadow) {
         // versehentlich mit fremdem Sonnenstand weiter.
         const sunSnapshot = {sunDirX, sunDirY, altitudeRad, night};
 
+        // Bei einem Fehlschlag (z.B. kurzer Netz-Hänger beim Kachel-Nachladen)
+        // ein paar Mal automatisch erneut versuchen, statt die zuletzt gezeigte
+        // Fläche stillschweigend für den Rest der Fahrt einfrieren zu lassen —
+        // ohne jeden Hinweis war das am Gerät nicht von einer echten
+        // Nacht-Berechnung zu unterscheiden (13./14.9.2026).
         let result;
-        try {
-            result = await computeShadow({
-                center: {lng, lat},
-                gridZoom,
-                gridRadiusTiles: SHADOW.gridRadiusTiles,
-                outputRadiusTiles: SHADOW.outputRadiusTiles
-            });
-        } catch {
-            // Netz-/Worker-Fehler: die zuletzt gezeigte Fläche bleibt stehen,
-            // statt mit einem Fehlerbanner den Fahrbetrieb zu stören.
-            return;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                result = await computeShadow({
+                    center: {lng, lat},
+                    gridZoom,
+                    gridRadiusTiles: SHADOW.gridRadiusTiles,
+                    outputRadiusTiles: SHADOW.outputRadiusTiles
+                });
+                break;
+            } catch {
+                if (attempt >= SHADOW.maxRetries - 1 || !enabled || id <= latestAppliedId) return;
+                await new Promise((resolve) => setTimeout(resolve, SHADOW.retryDelayMs));
+            }
         }
         // Zwischenzeitlich ist eine neuere Anfrage unterwegs, oder der Schatten
         // wurde inzwischen wieder ausgeschaltet — dieses Ergebnis verwerfen.

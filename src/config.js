@@ -144,7 +144,17 @@ export const SHADOW = {
      * (13.9.2026) wieder eine echte Neuberechnung statt eines blossen
      * Uniform-Updates, die Rechnung selbst bleibt aber GPU-schnell.
      */
-    debounceMs: 400
+    debounceMs: 400,
+    /**
+     * Bei einem Fehlschlag (Netz/Worker) so oft automatisch erneut versuchen,
+     * mit dieser Pause dazwischen — deckt einen kurzen Netz-Hänger beim
+     * Kachel-Nachladen ab, ohne die zuletzt gezeigte Fläche unbegrenzt lange
+     * stehen zu lassen (14.9.2026, Gerätebefund: eine fehlgeschlagene
+     * Neuberechnung vor Sonnenaufgang blieb unbemerkt stehen und sah nach
+     * Sonnenaufgang wie ein Fehler aus, weil sie nie erneuert wurde).
+     */
+    maxRetries: 3,
+    retryDelayMs: 2000
 };
 
 /** Basemap: swisstopo-Luftbild als WMTS-Raster. VERIFY: Layer-ID/Time/Format. */

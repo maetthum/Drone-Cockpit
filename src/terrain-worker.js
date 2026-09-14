@@ -111,6 +111,11 @@ async function ensureShadowHandler() {
             registerQuantizedMeshTerrain(shadowCollector, {dataset: shadowDataset, decode});
             return shadowHandler;
         })();
+        // Bei Fehlschlag nicht dauerhaft ein totes Versprechen cachen (gleiches
+        // Muster wie `meshCache` im Terrain-Plugin) — sonst würde jeder
+        // spätere Versuch für den Rest der Sitzung an genau diesem einen
+        // Fehler scheitern, statt den echten Ladeversuch zu wiederholen.
+        shadowHandlerPromise.catch(() => { shadowHandlerPromise = null; });
     }
     return shadowHandlerPromise;
 }
