@@ -253,6 +253,20 @@ export const SHADOW = {
      */
     heightBlurMeters: 25,
     /**
+     * Weichzeichnung des fertigen Schattenbildes, in Pixeln der Ausgabe-
+     * Canvas (`outputPixels`) — zusätzlich zur Höhen-Weichzeichnung oben, aber
+     * mit anderem Ziel (14.9.2026, Gerätebefund „Schatten willkürlich" auf
+     * zerklüftetem Gelände). Am Höhendaten-Ausschnitt und am echten Luftbild
+     * bestätigt: die einzelnen Flecken sind reales, sehr feinteiliges Gelände
+     * (Schutthang), kein Rechenfehler — für das Cockpit soll es trotzdem
+     * ruhiger wirken. Wirkt auf das Ergebnis, nicht auf die Höhendaten, ist
+     * also reine Kosmetik und beeinflusst die Schatten-Reichweite nicht.
+     * In Ausgabepixeln statt Metern: die Kante soll unabhängig vom Zoom immer
+     * gleich weich aussehen, nicht wie `heightBlurMeters` mit der realen
+     * Fläche mitskalieren.
+     */
+    postBlurPixels: 6,
+    /**
      * Farbe der Schattenfläche. Reines Schwarz war am Gerät auf Wald-/Felshängen
      * kaum von den echten, zur Aufnahmezeit gehörigen Schatten im Luftbild zu
      * unterscheiden. Ein erster Versuch mit Violett (13.9.2026) verschwamm über

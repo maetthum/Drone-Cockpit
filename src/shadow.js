@@ -158,6 +158,53 @@ void main() {
 }
 `;
 
+/**
+ * Weichzeichnet das fertige Schattenbild selbst, nach der Verschattungsrechnung
+ * (14.9.2026, Gerätebefund „Schatten willkürlich" auf zerklüftetem Gelände).
+ * Die einzelnen Flecken liessen sich am Höhendaten-Ausschnitt und am echten
+ * Luftbild als reales, sehr feinteiliges Gelände (Schutthang) bestätigen —
+ * kein Rechenfehler. Fürs Cockpit soll es trotzdem ruhiger wirken: dieser
+ * Durchgang glättet das Ergebnis, nicht die Ursache.
+ *
+ * Separables 1D-Band (9 Abgriffe, Gewichte einer schmalen Glockenkurve) —
+ * zwei Durchgänge (waagrecht, dann senkrecht mit demselben Shader) ergeben
+ * eine echte Flächen-Weichzeichnung zu Kosten von zwei statt einem
+ * zusätzlichen Durchgang, nicht 81 Texturzugriffen für ein einziges 2D-Band.
+ */
+const POST_BLUR_FRAGMENT_SRC = `
+precision highp float;
+varying vec2 v_outputUv;
+uniform sampler2D u_input;
+uniform vec2 u_step;
+
+void main() {
+    vec4 sum = vec4(0.0);
+    sum += texture2D(u_input, v_outputUv - u_step * 4.0) * 0.05;
+    sum += texture2D(u_input, v_outputUv - u_step * 3.0) * 0.09;
+    sum += texture2D(u_input, v_outputUv - u_step * 2.0) * 0.12;
+    sum += texture2D(u_input, v_outputUv - u_step * 1.0) * 0.15;
+    sum += texture2D(u_input, v_outputUv) * 0.18;
+    sum += texture2D(u_input, v_outputUv + u_step * 1.0) * 0.15;
+    sum += texture2D(u_input, v_outputUv + u_step * 2.0) * 0.12;
+    sum += texture2D(u_input, v_outputUv + u_step * 3.0) * 0.09;
+    sum += texture2D(u_input, v_outputUv + u_step * 4.0) * 0.05;
+    gl_FragColor = sum;
+}
+`;
+
+/** Reines Umkopieren (ein Texturzugriff) — für das abschliessende Hochskalieren
+ * der Nachweichzeichnung auf die Ausgabeauflösung, ohne dafür erneut neun
+ * Abgriffe zu bezahlen (siehe `compute()`, Aufrufer von POST_BLUR_FRAGMENT_SRC
+ * mit Schritt 0 wäre exakt dasselbe Ergebnis, nur neunmal so teuer). */
+const COPY_FRAGMENT_SRC = `
+precision highp float;
+varying vec2 v_outputUv;
+uniform sampler2D u_input;
+void main() {
+    gl_FragColor = texture2D(u_input, v_outputUv);
+}
+`;
+
 function compileShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -224,6 +271,17 @@ function createComputer(canvasSize) {
         blurTexels: gl.getUniformLocation(blurProgram, 'u_blurTexels'),
         pos: gl.getAttribLocation(blurProgram, 'a_pos')
     };
+    const postBlurProgram = createProgram(gl, POST_BLUR_FRAGMENT_SRC);
+    const postBlurLoc = {
+        input: gl.getUniformLocation(postBlurProgram, 'u_input'),
+        step: gl.getUniformLocation(postBlurProgram, 'u_step'),
+        pos: gl.getAttribLocation(postBlurProgram, 'a_pos')
+    };
+    const copyProgram = createProgram(gl, COPY_FRAGMENT_SRC);
+    const copyLoc = {
+        input: gl.getUniformLocation(copyProgram, 'u_input'),
+        pos: gl.getAttribLocation(copyProgram, 'a_pos')
+    };
     const loc = {
         heights: gl.getUniformLocation(program, 'u_heights'),
         uvScale: gl.getUniformLocation(program, 'u_uvScale'),
@@ -266,6 +324,46 @@ function createComputer(canvasSize) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     let blurSize = 0;
 
+    // Zwischenziele für die Nachweichzeichnung des fertigen Bildes, fest in
+    // der Ausgabeauflösung (die ändert sich nicht wie das Höhenraster).
+    // `rayTarget` in voller Auflösung (die Verschattungsrechnung braucht ihre
+    // eigene Schärfe), die beiden Weichzeichner-Durchgänge dagegen nur auf
+    // dem halben Raster — beim Weichzeichnen geht ohnehin Detail verloren,
+    // das fällt nicht auf, und der abschliessende Kopier-Durchgang skaliert
+    // mit einem einzigen Texturzugriff pro Pixel zurück auf volle Auflösung.
+    // Ohne diese Halbierung kostete jeder der beiden Durchgänge neun
+    // Texturzugriffe auf jedem Pixel der vollen Canvas — gemessen: 1,2 s auf
+    // 4,0 s (14.9.2026, echtes Netz, SwiftShader).
+    function createRenderTexture(size) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return {tex, fbo};
+    }
+    const postSize = Math.max(1, Math.round(canvasSize / 2));
+    const rayTarget = createRenderTexture(canvasSize);
+    const postTargetA = createRenderTexture(postSize);
+    const postTargetB = createRenderTexture(postSize);
+
+    function drawPostBlurPass(sourceTexture, step) {
+        gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.uniform1i(postBlurLoc.input, 0);
+        gl.uniform2f(postBlurLoc.step, step[0], step[1]);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+        gl.enableVertexAttribArray(postBlurLoc.pos);
+        gl.vertexAttribPointer(postBlurLoc.pos, 2, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+
     return {
         /**
          * Rechnet die Schattenfläche für ein geladenes Höhenraster und gibt
@@ -304,7 +402,10 @@ function createComputer(canvasSize) {
             gl.vertexAttribPointer(blurLoc.pos, 2, gl.FLOAT, false, 0, 0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            // Verschattungsrechnung ins Zwischenziel statt direkt auf die
+            // sichtbare Canvas — die beiden Nachweichzeichner-Durchgänge
+            // unten brauchen das Ergebnis als Textur.
+            gl.bindFramebuffer(gl.FRAMEBUFFER, rayTarget.fbo);
             gl.viewport(0, 0, canvasSize, canvasSize);
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT);
@@ -329,6 +430,32 @@ function createComputer(canvasSize) {
             gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
             gl.enableVertexAttribArray(loc.pos);
             gl.vertexAttribPointer(loc.pos, 2, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            // Nachweichzeichnung auf dem halben Raster (siehe postSize oben):
+            // waagrecht ins erste Zwischenziel, senkrecht ins zweite — die
+            // UV-Schrittweite bleibt auf die volle Canvas bezogen, damit der
+            // wahrgenommene Weichzeichner-Radius unabhängig von `postSize` ist.
+            const step = SHADOW.postBlurPixels / canvasSize;
+            gl.useProgram(postBlurProgram);
+            gl.viewport(0, 0, postSize, postSize);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, postTargetA.fbo);
+            drawPostBlurPass(rayTarget.tex, [step, 0]);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, postTargetB.fbo);
+            drawPostBlurPass(postTargetA.tex, [0, step]);
+
+            // Zurück auf volle Auflösung: ein einzelner Texturzugriff pro
+            // Pixel statt neun, das lineare Hochskalieren übernimmt die
+            // Hardware-Texturfilterung (TEXTURE_MIN/MAG_FILTER: LINEAR).
+            gl.useProgram(copyProgram);
+            gl.viewport(0, 0, canvasSize, canvasSize);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.bindTexture(gl.TEXTURE_2D, postTargetB.tex);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.uniform1i(copyLoc.input, 0);
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+            gl.enableVertexAttribArray(copyLoc.pos);
+            gl.vertexAttribPointer(copyLoc.pos, 2, gl.FLOAT, false, 0, 0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
             return canvas.transferToImageBitmap();
