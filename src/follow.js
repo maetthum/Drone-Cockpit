@@ -86,6 +86,14 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
     let letzterFixZeit = 0;
     let fahrtTempo = 0;
     let fahrtKurs = null;
+    /** Zeitpunkt des vorletzten Fixes — Basis der gemessenen GPS-Kursrate. */
+    let vorigeFixZeit = null;
+    /**
+     * Änderungsrate des GPS-Kurses in Grad pro Sekunde, geglättet. Speist
+     * sowohl die Kurs- als auch die Positions-Weiterrechnung zwischen zwei
+     * Fixes (siehe `koppelDrehrate`).
+     */
+    let gpsKursRate = null;
     /** Tatsächlich dargestellte Kameraposition; läuft dem Ziel weich nach. */
     let camera = null;
 
@@ -199,9 +207,12 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
      * Bewegungsvektor umgeschaltet, erst unter der Kompass-Schwelle zurück.
      * Dazwischen bleibt die bisherige Quelle stehen.
      */
-    function selectHeading(fix) {
+    function selectHeading(fix, now) {
         const speed = fix?.speed ?? null;
-        const gpsHeading = fix?.heading ?? null;
+        // Nicht der rohe Kurs des letzten Fixes, sondern der bis jetzt
+        // weitergedrehte — sonst steht der Zielkurs zwischen zwei Fixes still
+        // und springt dann (siehe `fahrtKursJetzt()`).
+        const gpsHeading = fahrtKursJetzt(now) ?? (fix?.heading ?? null);
         const gpsUsable = gpsHeading !== null && speed !== null && speed >= FOLLOW.gpsHeadingMinSpeedMps;
         const compassUsable = compassHeading !== null;
 
@@ -217,7 +228,7 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
     }
 
     function updateHeadingTarget(now) {
-        const selection = selectHeading(lastFix);
+        const selection = selectHeading(lastFix, now);
         if (selection.heading === null) return;
         if (selection.source !== headingSource) {
             // Erster Wechsel (noch keine Quelle) braucht keine Überblendung.
@@ -260,8 +271,58 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
         // Vorhersage, und `target` ist die Schätzung für genau diesen Moment.
         letzterFixZeit = jetzt;
         fahrtTempo = fix.speed ?? 0;
-        fahrtKurs = fix.heading ?? null;
+        const neuerKurs = fix.heading ?? null;
+        /*
+         * Drehrate aus zwei aufeinanderfolgenden GPS-Kursen, nicht aus dem
+         * Kompass (14.9.2026). Gefragt ist, wie sich die *Fahrtrichtung*
+         * ändert — und genau die misst der GPS-Kurs. Der Kompass wäre die
+         * naheliegende Quelle, ist im Fahrzeug aber durch Karosserie und
+         * Elektronik gestört (siehe FOLLOW.headingTauCompassSeconds).
+         */
+        if (fahrtKurs !== null && neuerKurs !== null && vorigeFixZeit !== null) {
+            const dt = (jetzt - vorigeFixZeit) / 1000;
+            if (dt > 0.05 && dt <= FOLLOW.koppelMaxSeconds) {
+                const gemessen = shortestAngleDelta(fahrtKurs, neuerKurs) / dt;
+                gpsKursRate = gpsKursRate === null
+                    ? gemessen
+                    : gpsKursRate + (gemessen - gpsKursRate) * FOLLOW.drehrateEmaAlpha;
+            }
+        }
+        vorigeFixZeit = jetzt;
+        fahrtKurs = neuerKurs;
         updateHeadingTarget(jetzt);
+    }
+
+    /**
+     * Drehrate für die Vorhersage zwischen zwei Fixes, in Grad pro Sekunde.
+     * Bevorzugt die gemessene GPS-Kursrate, sonst die Kompass-Drehrate. Beide
+     * durch dasselbe weiche Tor: Rauschen um null herum wird gedämpft, eine
+     * echte Drehrate geht nahezu unverändert durch (siehe
+     * FOLLOW.koppelDrehrateTotDegrees).
+     */
+    function koppelDrehrate() {
+        const roh = gpsKursRate !== null ? gpsKursRate : drehrate;
+        const tot = FOLLOW.koppelDrehrateTotDegrees;
+        return (roh * roh * roh) / (roh * roh + tot * tot);
+    }
+
+    /**
+     * Fahrtrichtung **jetzt** — der letzte GPS-Kurs, um die seither
+     * weitergedrehte Strecke ergänzt.
+     *
+     * Ohne das war `targetHeading` zwischen zwei Fixes konstant und sprang im
+     * Sekundentakt: am Gerät gemessen (Kurvenfahrt 14.9.2026) wanderte der
+     * GPS-Kurs in Schritten von 4 bis 14° je Sekunde, und weil die Kamera ihm
+     * mit `headingTauSeconds` (0,2 s) zügig folgt, wurde daraus je Fix ein
+     * kurzer Schwenk mit Stillstand dazwischen — das im Video sichtbare
+     * Rucken in der Kurve. Die Position wurde längst weitergerechnet
+     * (`koppelZiel`), der Kurs nicht: genau diese Asymmetrie war die Ursache.
+     */
+    function fahrtKursJetzt(now) {
+        if (fahrtKurs === null) return null;
+        const sekunden = Math.min((now - letzterFixZeit) / 1000, FOLLOW.koppelMaxSeconds);
+        if (!(sekunden > 0)) return fahrtKurs;
+        return normalizeAngle(fahrtKurs + koppelDrehrate() * sekunden);
     }
 
     /**
@@ -292,8 +353,13 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
         if (!(sekunden > 0)) return target;
         const rad = Math.PI / 180;
         const kurs0 = fahrtKurs * rad;
-        const omega = Math.sign(drehrate)
-            * Math.max(0, Math.abs(drehrate) - FOLLOW.kompassVorhalteTotDegrees) * rad;
+        // Dieselbe Drehrate wie die Kurs-Weiterrechnung (siehe
+        // `koppelDrehrate()`): gemessene GPS-Kursrate statt Kompass, und ein
+        // weiches Tor statt der abgezogenen 8-°/s-Totzone des Vorhalts. Unter
+        // jener Totzone lag eine ganz normale Kurvenfahrt (gemessen 3,6 °/s)
+        // komplett, die Kreisbahn war also abgeschaltet und der Weg lief auf
+        // der Tangente weiter.
+        const omega = koppelDrehrate() * rad;
         let ost;
         let nord;
         if (omega === 0) {
@@ -336,11 +402,10 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
              * Karte lief sekundenlang auf ein falsches Ziel zu. Sie kam nie an,
              * weil ihr niemand mehr sagte, wo „an" ist.
              *
-             * Stattdessen wird der Rohwert im Totband nur nicht mehr
-             * eingemischt: `compassHeading` bleibt stehen, der Zielkurs wird
+             * Stattdessen wird der Rohwert bei kleiner Abweichung nur schwächer
+             * eingemischt: `compassHeading` bewegt sich kaum, der Zielkurs wird
              * aber weiterhin gesetzt — inklusive des abklingenden Vorhalts.
              */
-            const imTotband = Math.abs(delta) < FOLLOW.headingDeadbandDegrees;
             // Grosser Sprung = echte Drehung, kleiner = Rauschen. Nur Letzteres
             // muss gedämpft werden (siehe FOLLOW.compassFastDeltaDegrees).
             // Nur ein wirklich grosser Sprung darf die Glättung überspringen.
@@ -352,10 +417,32 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
              * wie bisher — dort ist die Trägheit die Rauschbekämpfung, überall
              * sonst ist sie der Nachlauf.
              */
-            const dreht = Math.abs(drehrate) >= FOLLOW.kompassVorhalteTotDegrees;
+            /*
+             * Ruhe- und Drehalpha werden stetig ineinander übergeblendet statt
+             * hart umgeschaltet (14.9.2026). Vorher galt ab genau
+             * `kompassVorhalteTotDegrees` (8 °/s) schlagartig das zügige
+             * Alpha — eine reale Kurvenfahrt mit 3,6 °/s lag komplett darunter
+             * und wurde mit dem Stillstands-Alpha nachgeführt, also träge.
+             * Der Massstab bleibt bewusst bei 8 °/s: er hält das Verhalten im
+             * Stand praktisch unverändert (bei 3 °/s Rauschen zieht das Tor nur
+             * 12 % in Richtung Drehalpha) und macht den Übergang trotzdem
+             * stufenlos.
+             */
+            const drehSkala = FOLLOW.kompassVorhalteTotDegrees;
+            const drehAnteil = (drehrate * drehrate) / (drehrate * drehrate + drehSkala * drehSkala);
+            const alphaBasis = FOLLOW.compassEmaAlpha
+                + (FOLLOW.compassEmaAlphaDrehend - FOLLOW.compassEmaAlpha) * drehAnteil;
+            /*
+             * Der Sprungfall bleibt bewusst eine harte Fallunterscheidung: er
+             * trennt zwei Regime (echter Sprung gegen alles andere), und ein
+             * weicher Übergang würde genau den Befund vom 6.9.2026
+             * zurückholen — eine einzelne Magnetometerstufe von 16° zöge das
+             * Alpha schon anteilig Richtung „Sprung" und ruckte sichtbar
+             * (siehe FOLLOW.compassJumpDeltaDegrees).
+             */
             const alpha = Math.abs(delta) >= FOLLOW.compassJumpDeltaDegrees
                 ? FOLLOW.compassEmaAlphaFast
-                : (dreht ? FOLLOW.compassEmaAlphaDrehend : FOLLOW.compassEmaAlpha);
+                : alphaBasis;
             /*
              * Im Totband wird mit dem trägen Alpha eingemischt statt gar nicht.
              * Gar nicht hiess: `compassHeading` blieb auf dem Nachlauf stehen,
@@ -364,7 +451,13 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
              * 3° das Ergebnis um 0,18° — unsichtbar —, ein anliegender echter
              * Fehler wird aber abgebaut.
              */
-            const wirksam = imTotband ? FOLLOW.compassEmaAlpha : alpha;
+            // Auch hier stetig statt hart (14.9.2026): das Totband zog vorher
+            // ab genau 3° Abweichung schlagartig das träge Alpha heran. Jetzt
+            // wächst die Wirkung mit der Abweichung — bei 3° genau die Hälfte,
+            // darunter weniger, darüber mehr.
+            const totSkala = FOLLOW.headingDeadbandDegrees;
+            const deltaAnteil = (delta * delta) / (delta * delta + totSkala * totSkala);
+            const wirksam = FOLLOW.compassEmaAlpha + (alpha - FOLLOW.compassEmaAlpha) * deltaAnteil;
             compassHeading = normalizeAngle(compassHeading + wirksam * delta);
         }
 
@@ -783,6 +876,16 @@ export function createFollowController(map, {onFrame, onHoeheUebernommen} = {}) 
         // liefe die Interpolation bei niedriger Bildrate langsamer als
         // konfiguriert.
         const resuming = dt <= 0 || dt > FOLLOW.resumeSnapSeconds;
+        /*
+         * Zielkurs in jedem Bild neu setzen, nicht nur bei einem neuen Fix
+         * oder Kompasswert (14.9.2026). Vorher war `targetHeading` zwischen
+         * zwei Sensorwerten konstant — bei 1-Hz-Fixes also eine Treppe, und
+         * die Kamera lief je Stufe kurz los und blieb dann stehen. Genau das
+         * war das Rucken in der Kurve. `fahrtKursJetzt()` liefert den bis
+         * jetzt weitergedrehten Kurs, und erst dieser Aufruf bringt ihn auch
+         * zwischen den Fixes an.
+         */
+        updateHeadingTarget(now);
         // Nicht auf den zuletzt empfangenen Punkt zulaufen, sondern auf den,
         // an dem man jetzt sein dürfte — sonst steht die Karte zwischen zwei
         // Fixes still (siehe FOLLOW.koppelMaxSeconds).
