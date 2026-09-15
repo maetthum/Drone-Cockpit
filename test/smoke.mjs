@@ -762,15 +762,29 @@ async function testManualMode() {
  * bräuchte er eine Neuberechnung im Frame-Takt statt einmal je Kamerastillstand
  * (siehe SHADOW in config.js). Prüft die Verdrahtung, nicht die Verdeckung an
  * echtem Gelände — das gestubbte Terrain ist überall gleich hoch.
+ *
+ * Kamera und Schatten teilen sich seit dem 15.9.2026 ein Menü (`anchor-
+ * control`/`anchor-toggle`) statt zweier getrennter Panels — der Anfasser
+ * bleibt in beiden Modi sichtbar, nur die jeweils unpassende Reglergruppe
+ * ist gesperrt (`disabled`), nicht mehr versteckt. „Höhe" ist das Gegenstück:
+ * nur im Tracking bedienbar, weil es sonst den Zoom unter dem Finger wegrisse.
  */
 async function testShadowModeGating() {
     const {browser, page, pageErrors} = await openPage({withSensorHarness: true});
     await enterLiveMode(page);
 
-    const trackingHidden = await page.evaluate(() => document.getElementById('shadow-toggle').hidden);
+    const trackingState = await page.evaluate(() => ({
+        toggleHidden: document.getElementById('anchor-toggle').hidden,
+        shadowDisabled: document.getElementById('shadow-enable').disabled,
+        heightDisabled: document.getElementById('height').disabled
+    }));
 
     await page.click('#mode-manual');
-    const manualVisible = await page.evaluate(() => !document.getElementById('shadow-toggle').hidden);
+    const manualState = await page.evaluate(() => ({
+        toggleHidden: document.getElementById('anchor-toggle').hidden,
+        shadowDisabled: document.getElementById('shadow-enable').disabled,
+        heightDisabled: document.getElementById('height').disabled
+    }));
 
     await page.evaluate(async () => {
         window.cockpit.shadow.setEnabled(true);
@@ -780,20 +794,24 @@ async function testShadowModeGating() {
 
     await page.click('#mode-tracking');
     const layerAfterTracking = await page.evaluate(() => !!window.cockpit.map.getLayer('shadow'));
-    const toggleHiddenAgain = await page.evaluate(() => document.getElementById('shadow-toggle').hidden);
+    const shadowDisabledAgain = await page.evaluate(() => document.getElementById('shadow-enable').disabled);
     const enabledAfterTracking = await page.evaluate(() => window.cockpit.shadow.isEnabled);
 
     await browser.close();
 
     const failures = [];
-    if (!trackingHidden) failures.push('Schalter im Tracking sichtbar');
-    if (!manualVisible) failures.push('Schalter im Manuell-Modus nicht sichtbar');
+    if (trackingState.toggleHidden) failures.push('Anfasser im Tracking versteckt');
+    if (!trackingState.shadowDisabled) failures.push('Schatten-Regler im Tracking bedienbar');
+    if (trackingState.heightDisabled) failures.push('Höhen-Regler im Tracking gesperrt');
+    if (manualState.toggleHidden) failures.push('Anfasser im Manuell-Modus versteckt');
+    if (manualState.shadowDisabled) failures.push('Schatten-Regler im Manuell-Modus gesperrt');
+    if (!manualState.heightDisabled) failures.push('Höhen-Regler im Manuell-Modus bedienbar');
     if (!layerWhileManual) failures.push('Schattenlayer erscheint im Manuell-Modus nicht');
     if (layerAfterTracking) failures.push('Schattenlayer bleibt nach Rückkehr ins Tracking stehen');
-    if (!toggleHiddenAgain) failures.push('Schalter nach Rückkehr ins Tracking noch sichtbar');
+    if (!shadowDisabledAgain) failures.push('Schatten-Regler nach Rückkehr ins Tracking noch bedienbar');
     if (enabledAfterTracking) failures.push('Schatten gilt nach Rückkehr ins Tracking noch als eingeschaltet');
     if (pageErrors.length > 0) failures.push(`JS-Fehler: ${pageErrors.join(' | ')}`);
-    report('Geländeschatten: nur im Manuell-Modus, geht beim Wechsel wieder aus', failures);
+    report('Geländeschatten: nur im Manuell-Modus bedienbar, geht beim Wechsel wieder aus', failures);
 }
 
 /**

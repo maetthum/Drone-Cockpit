@@ -363,7 +363,9 @@ html, body {
     pointer-events: none;
 }
 
-/* Kameralage: links unten, weil rechts die Modi und das Layer-Panel stehen. */
+/* Kamera & Schatten: links unten, weil rechts die Modi und das Layer-Panel
+   stehen. Ein gemeinsames Menü seit dem 15.9.2026 (Nutzer: „alles in ein
+   Menu") — vorher zwei getrennte Panels (Kameralage, Geländeschatten). */
 .anchor-control {
     display: grid;
     gap: 4px;
@@ -372,20 +374,41 @@ html, body {
     border-radius: 14px;
     background: var(--panel);
     backdrop-filter: blur(8px);
+    width: min(260px, calc(100vw - 76px));
 }
 
 .anchor-control[hidden] { display: none; }
 
+/* Grid-Kinder dürfen sonst nicht unter ihre intrinsische Inhaltsbreite
+   schrumpfen — betraf zuerst das Datumsfeld im früheren eigenen
+   Schatten-Panel, strukturell aber jedes Grid-Kind (14.9.2026, Gerätebefund
+   „Datumfeldrahmen ist immer noch zu breit"). */
+.anchor-control > * { min-width: 0; }
+
 .camera-row { display: flex; align-items: center; gap: 8px; }
 
-.anchor-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; min-width: 34px; }
+/* Feste Breite statt min-width: „Dunkelheit" ist deutlich länger als
+   „Vor"/„Höhe", ohne sie sässen nur die kürzeren Zeilen enger (14.9.2026,
+   Gerätebefund „Fensterbreite passt nicht"). */
+.anchor-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; min-width: 78px; }
 .anchor-range { width: 110px; accent-color: var(--fg); }
 .anchor-value { color: var(--fg); font-size: 11px; min-width: 62px; }
 
-/* „Dunkelheit" ist deutlich länger als „Vor"/„Höhe" im Kamera-Panel — ohne
-   diese Breite sitzt nur die Dunkelheit-Zeile weiter rechts als die Rand-
-   Zeile darunter (14.9.2026, Gerätebefund „Fensterbreite passt nicht"). */
-.shadow-panel .anchor-label { min-width: 78px; }
+/* Regler, die im jeweils anderen Modus nichts bewirken (Höhe im Manuell,
+   Schatten im Tracking — siehe setMode in main.js), stehen weiter da, aber
+   gedimmt statt bedienbar (15.9.2026, Nutzer: „alles in ein Menu", danach
+   Absprache „grau/deaktiviert im falschen Modus"). */
+.camera-row:has(:disabled),
+.shadow-row:has(:disabled) { opacity: 0.4; }
+
+/* Trennt die Kamera- von den Schatten-Reglern im gemeinsamen Menü. */
+.panel-divider {
+    width: 100%;
+    border: 0;
+    border-top: 1px solid var(--muted);
+    opacity: 0.3;
+    margin: 2px 0;
+}
 
 /* Zwei Modi statt eines Schalters: im Fahrzeug muss auf einen Blick klar sein,
    ob die Karte gerade selbst führt oder dem Finger gehört. */
@@ -444,51 +467,6 @@ html, body {
     font: inherit;
     cursor: pointer;
 }
-
-/* Gleicher Knopf wie .layers-toggle, nur im Manuell-Modus sichtbar (siehe
-   setMode in main.js) — Position kommt vom Fluss des Knopfstapels. */
-.shadow-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    appearance: none;
-    border: 0;
-    border-radius: 999px;
-    background: var(--panel);
-    color: var(--fg);
-    font: inherit;
-    cursor: pointer;
-}
-
-.shadow-toggle[hidden] { display: none; }
-
-/* Gleiches Muster wie .layers-panel: mittig und aus dem Knopfstapel
-   herausgelöst, damit das Aufklappen die übrigen Knöpfe nicht verschiebt. */
-.shadow-panel {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 5;
-    width: min(260px, calc(100vw - 40px));
-    padding: 14px 16px;
-    border-radius: 10px;
-    background: var(--panel);
-    backdrop-filter: blur(8px);
-    display: grid;
-    gap: 10px;
-}
-
-/* Grid-Kinder dürfen sonst nicht unter ihre intrinsische Inhaltsbreite
-   schrumpfen — betraf zuerst das Datumsfeld, aber strukturell auch die
-   Regler-Zeilen (14.9.2026, Gerätebefund „Datumfeldrahmen ist immer noch zu
-   breit" nach einem auf `.shadow-datetime` beschränkten ersten Versuch). */
-.shadow-panel > * { min-width: 0; }
-
-.shadow-panel[hidden] { display: none; }
 
 .shadow-row { display: flex; gap: 8px; align-items: center; cursor: pointer; }
 .shadow-row input { accent-color: var(--fg); }
@@ -648,8 +626,13 @@ html, body {
 .panel-block-top { top: calc(var(--safe-top) + 145px); }
 .panel-block-bottom {
     /* Über dem Knopfstapel: der beginnt bei 744 von 966 px, und seit das Menü
-       bis zum rechten Rand reicht, lagen beide übereinander. */
-    bottom: calc(var(--safe-bottom) + 265px);
+       bis zum rechten Rand reicht, lagen beide übereinander.
+       Auf 330px angehoben (15.9.2026): das Menü trägt seit dem Zusammenlegen
+       mit dem Geländeschatten sechs Zeilen mehr (202 statt rund 76 px hoch,
+       am Gerät bei 430×900 gemessen) und reichte mit dem alten Wert bis in
+       „Zu mir" hinein — am Smoke-Test aufgefallen (Klick auf `#recenter`
+       traf das Panel statt des Knopfs). */
+    bottom: calc(var(--safe-bottom) + 330px);
     transform: translateY(50%);
 }
 
@@ -698,7 +681,6 @@ html, body {
 .controls > .recenter,
 .controls > .compass,
 .controls > .layers-toggle,
-.controls > .shadow-toggle,
 .controls > .modes {
     position: static;
     right: auto;
@@ -719,8 +701,7 @@ html, body {
 
     .recenter,
     .compass,
-    .layers-toggle,
-    .shadow-toggle {
+    .layers-toggle {
         width: 36px;
         height: 36px;
     }

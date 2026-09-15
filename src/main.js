@@ -61,8 +61,6 @@ const els = {
     anchorToggle: document.getElementById('anchor-toggle'),
     layersToggle: document.getElementById('layers-toggle'),
     layersPanel: document.getElementById('layers-panel'),
-    shadowToggle: document.getElementById('shadow-toggle'),
-    shadowPanel: document.getElementById('shadow-panel'),
     shadowEnable: document.getElementById('shadow-enable'),
     shadowDate: document.getElementById('shadow-date'),
     shadowTime: document.getElementById('shadow-time'),
@@ -642,7 +640,7 @@ async function main() {
 
     verbindePanel(els.quellenToggle, els.quellen, 'Quellen einblenden', 'Quellen ausblenden');
     verbindePanel(els.hudToggle, els.hud, 'Positionsdaten einblenden', 'Positionsdaten ausblenden');
-    verbindePanel(els.anchorToggle, els.anchorControl, 'Kameralage einblenden', 'Kameralage ausblenden');
+    verbindePanel(els.anchorToggle, els.anchorControl, 'Kamera & Schatten einblenden', 'Kamera & Schatten ausblenden');
 
     /*
      * Knopfstapel (Layer, Modi, Zu-mir, Kompass) tritt bei Inaktivität
@@ -753,6 +751,32 @@ async function main() {
      * **Manuell** — die Kamera gehört dem Finger. Verschieben, Kneifen, Drehen
      * und Neigen sind frei, der Frame-Loop steht still.
      */
+    /**
+     * Sperrt die Regler, die im jeweils anderen Modus nichts Sinnvolles tun
+     * würden — beide Gruppen bleiben sichtbar (15.9.2026, Nutzer: „alles in
+     * ein Menu"), nur bedienbar ist jeweils eine.
+     *
+     * „Höhe" ruft `follow.setCameraHeight()` → `applyHeight({sofort: true})`
+     * auf, die unbedingt `map.jumpTo({zoom})` setzt — im Manuell-Modus würde
+     * das den Zoom unter dem Finger wegreissen, nicht nur wirkungslos
+     * herumstehen. „Vor" bleibt dagegen immer bedienbar: `follow.setAnchor()`
+     * wirkt laut eigenem Kommentar bewusst in beiden Modi (nur Padding, kein
+     * Zoom/Pitch).
+     *
+     * Der Geländeschatten bleibt Tracking gesperrt (siehe SHADOW in
+     * config.js: Neuberechnung im Frame-Takt wäre nötig) sowie, wenn das
+     * Terrain gar nicht verfügbar ist.
+     */
+    function reglerSperren(tracking) {
+        els.height.disabled = !tracking;
+        const schattenGesperrt = tracking || !shadow.isAvailable;
+        els.shadowEnable.disabled = schattenGesperrt;
+        els.shadowDate.disabled = schattenGesperrt;
+        els.shadowTime.disabled = schattenGesperrt;
+        els.shadowOpacity.disabled = schattenGesperrt;
+        els.shadowEdge.disabled = schattenGesperrt;
+    }
+
     function setMode(tracking) {
         /*
          * **Die Tracking-Lage übersteht den Ausflug.** Im Manuell-Modus
@@ -795,31 +819,24 @@ async function main() {
          */
         els.recenter.hidden = tracking || !hatPosition;
         /*
-         * **Die Kameralage gehört zum Tracking.** Im Manuell-Modus gehört die
-         * Kamera dem Finger; „Vor" und „Höhe" hätten dort nichts zu steuern,
-         * und ihre Werte kommen beim Zurückwechseln ohnehin unverändert wieder
-         * (siehe merkeLage). Ausserdem wächst der Knopfstapel im Manuell um
-         * „Zu mir" und den Kompass nach oben und läge sonst unter dem Menü.
+         * Kamera & Schatten teilen sich seit dem 15.9.2026 ein Menü (Nutzer:
+         * „alles in ein Menu") — der Anfasser bleibt jetzt in beiden Modi
+         * sichtbar, statt zwischen zwei getrennten Knöpfen zu wechseln, und
+         * das Panel wird beim Moduswechsel nicht mehr zugeklappt.
          */
-        els.anchorToggle.hidden = !tracking || !liveGestartet;
-        if (!tracking) {
-            els.anchorControl.hidden = true;
-            els.anchorToggle.setAttribute('aria-expanded', 'false');
-        }
-        /*
-         * **Der Geländeschatten gehört zum Manuell-Modus** (siehe SHADOW in
-         * config.js) — im Tracking bräuchte er eine Neuberechnung im Frame-
-         * Takt, statt einmal je Kamerastillstand. Beim Verlassen des
-         * Manuell-Modus geht er deshalb wieder aus, statt einen veralteten
-         * Ausschnitt stehen zu lassen.
-         */
-        els.shadowToggle.hidden = tracking || !shadow.isAvailable;
+        els.anchorToggle.hidden = !liveGestartet;
         if (tracking) {
+            /*
+             * Der Geländeschatten gehört weiterhin nur dem Manuell-Modus
+             * (siehe SHADOW in config.js) — im Tracking bräuchte er eine
+             * Neuberechnung im Frame-Takt statt einmal je Kamerastillstand.
+             * Beim Wechsel ins Tracking geht er deshalb aus, statt einen
+             * veralteten Ausschnitt stehen zu lassen.
+             */
             shadow.setEnabled(false);
             els.shadowEnable.checked = false;
-            els.shadowPanel.hidden = true;
-            els.shadowToggle.setAttribute('aria-expanded', 'false');
         }
+        reglerSperren(tracking);
     }
 
     /**
@@ -918,24 +935,16 @@ async function main() {
     els.modeTracking.addEventListener('click', () => setMode(true));
     els.modeManual.addEventListener('click', () => setMode(false));
 
-    els.shadowToggle.addEventListener('click', () => {
-        const open = els.shadowPanel.hidden;
-        if (unterdrueckeOeffnen && open) return;
-        els.shadowPanel.hidden = !open;
-        els.shadowToggle.setAttribute('aria-expanded', String(open));
-    });
-    AUSSEN_SCHLIESSBAR.push({
-        panel: els.shadowPanel, toggle: els.shadowToggle,
-        schliessen: () => {
-            els.shadowPanel.hidden = true;
-            els.shadowToggle.setAttribute('aria-expanded', 'false');
-        }
-    });
     // Capture-Phase: greift auch, wenn ein innerer Klick-Handler die
     // Ausbreitung stoppt. Der jeweilige Anfasser zählt nicht als „aussen" —
     // sonst schlösse dieser Listener das Panel eine Zeile vor dem eigenen
-    // Toggle-Klick wieder, der es gerade erst geöffnet hat.
+    // Toggle-Klick wieder, der es gerade erst geöffnet hat. Die Modi-Knöpfe
+    // zählen ebenfalls nicht: das Kamera-&-Schatten-Menü soll beim
+    // Moduswechsel offen bleiben (15.9.2026), sonst müsste man es nach jedem
+    // Umschalten neu aufklappen — genau das, was das Zusammenlegen ersparen
+    // sollte.
     document.addEventListener('pointerdown', (event) => {
+        if (els.modes.contains(event.target)) return;
         for (const {panel, toggle, schliessen} of AUSSEN_SCHLIESSBAR) {
             if (panel.hidden) continue;
             if (panel.contains(event.target) || toggle.contains(event.target)) continue;
@@ -1015,6 +1024,9 @@ async function main() {
         shadow.setPostBlurScale(postBlurScaleFromSlider(els.shadowEdge.value));
         els.shadowEdgeValue.textContent = `${els.shadowEdge.value} %`;
     });
+    // Startzustand ist Tracking — setMode() selbst wird erst beim ersten
+    // Moduswechsel aufgerufen, siehe els.modeTracking/-Manual unten.
+    reglerSperren(true);
 
     // Diagnose-Handle: erlaubt Inspektion per Safari-Webinspector im Fahrzeug
     // und ist der Zugriffspunkt für test/smoke.mjs.

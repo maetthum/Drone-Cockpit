@@ -43,31 +43,6 @@
 
 <div id="controls" class="controls">
   <div id="layers-panel" class="layers-panel" hidden></div>
-  <div id="shadow-panel" class="shadow-panel" hidden>
-    <label class="shadow-row">
-      <input id="shadow-enable" type="checkbox">
-      <span>Geländeschatten</span>
-    </label>
-    <input id="shadow-date" class="shadow-datetime" type="date" aria-label="Datum für den Sonnenstand">
-    <div class="camera-row">
-      <span class="anchor-label">Zeit</span>
-      <input id="shadow-time" class="anchor-range" type="range" min="0" max="1439" step="1" value="720"
-             aria-label="Uhrzeit für den Sonnenstand">
-      <span id="shadow-time-value" class="anchor-value">12:00</span>
-    </div>
-    <div class="camera-row">
-      <span class="anchor-label">Dunkelheit</span>
-      <input id="shadow-opacity" class="anchor-range" type="range" min="0" max="100" step="1" value="50"
-             aria-label="Deckkraft des Geländeschattens">
-      <span id="shadow-opacity-value" class="anchor-value">50 %</span>
-    </div>
-    <div class="camera-row">
-      <span class="anchor-label">Rand</span>
-      <input id="shadow-edge" class="anchor-range" type="range" min="0" max="100" step="1" value="50"
-             aria-label="Schärfe des Schattenrands">
-      <span id="shadow-edge-value" class="anchor-value">50 %</span>
-    </div>
-  </div>
   <button id="fullscreen" class="fullscreen" hidden aria-pressed="false"
           aria-label="Vollbild einschalten" title="Vollbild einschalten">
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
@@ -94,16 +69,6 @@
       <path d="M12 3 L21 8 L12 13 L3 8 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
       <path d="M3 12 L12 17 L21 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M3 16 L12 21 L21 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  </button>
-  <!-- Nur im Manuell-Modus sichtbar (siehe setMode in main.js) — der
-       Geländeschatten ist keine Live-Tracking-Grösse. -->
-  <button id="shadow-toggle" class="shadow-toggle" hidden aria-pressed="false" aria-expanded="false"
-          aria-controls="shadow-panel" aria-label="Geländeschatten" title="Geländeschatten">
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
-      <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/>
-      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
   </button>
   <div id="modes" class="modes" hidden>
@@ -139,9 +104,37 @@
            aria-label="Kamerahöhe über dem eigenen Standort">
     <span id="height-value" class="anchor-value">– m</span>
   </div>
+  <!-- Kamera und Geländeschatten teilen sich seit dem 15.9.2026 ein Menü
+       (Nutzer: „alles in ein Menu") — „Höhe" oben ist nur im Tracking
+       bedienbar, der Schatten unten nur im Manuell-Modus (siehe setMode in
+       main.js). Beide Gruppen bleiben aber immer sichtbar. -->
+  <hr class="panel-divider">
+  <label class="shadow-row">
+    <input id="shadow-enable" type="checkbox">
+    <span>Geländeschatten</span>
+  </label>
+  <input id="shadow-date" class="shadow-datetime" type="date" aria-label="Datum für den Sonnenstand">
+  <div class="camera-row">
+    <span class="anchor-label">Zeit</span>
+    <input id="shadow-time" class="anchor-range" type="range" min="0" max="1439" step="1" value="720"
+           aria-label="Uhrzeit für den Sonnenstand">
+    <span id="shadow-time-value" class="anchor-value">12:00</span>
+  </div>
+  <div class="camera-row">
+    <span class="anchor-label">Dunkelheit</span>
+    <input id="shadow-opacity" class="anchor-range" type="range" min="0" max="100" step="1" value="50"
+           aria-label="Deckkraft des Geländeschattens">
+    <span id="shadow-opacity-value" class="anchor-value">50 %</span>
+  </div>
+  <div class="camera-row">
+    <span class="anchor-label">Rand</span>
+    <input id="shadow-edge" class="anchor-range" type="range" min="0" max="100" step="1" value="50"
+           aria-label="Schärfe des Schattenrands">
+    <span id="shadow-edge-value" class="anchor-value">50 %</span>
+  </div>
 </div>
 <button id="anchor-toggle" class="panel-toggle" hidden aria-expanded="false"
-        aria-controls="anchor-control" aria-label="Kameralage einblenden" title="Kameralage einblenden">
+        aria-controls="anchor-control" aria-label="Kamera & Schatten einblenden" title="Kamera & Schatten einblenden">
   <svg viewBox="0 0 16 20" width="13" height="17" aria-hidden="true" focusable="false">
     <path d="M6.5 2 L10 10 L6.5 18" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round"/>
