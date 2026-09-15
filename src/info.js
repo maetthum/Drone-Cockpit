@@ -104,8 +104,12 @@ async function fetchDetails(layer, id) {
  * @param {import('maplibre-gl').Map} map
  * @param {{overlays: object, obstacles: object}} layers
  * @param {{panel: HTMLElement, body: HTMLElement, close: HTMLElement}} els
+ * @param {() => boolean} [istKartenklickUnterdrueckt] liefert `true`, wenn
+ *        derselbe Klick gerade ein Menü geschlossen hat und nicht zusätzlich
+ *        die Antippen-Info auslösen soll (siehe `AUSSEN_SCHLIESSBAR` in
+ *        main.js, 15.9.2026).
  */
-export function createInfo(map, {overlays, obstacles}, els) {
+export function createInfo(map, {overlays, obstacles}, els, istKartenklickUnterdrueckt = () => false) {
     /**
      * Nur abfragen, was auch zu sehen ist — sonst erklärt das Panel
      * Unsichtbares.
@@ -254,7 +258,10 @@ export function createInfo(map, {overlays, obstacles}, els) {
         }
     }
 
-    map.on('click', (event) => query(event.lngLat));
+    map.on('click', (event) => {
+        if (istKartenklickUnterdrueckt()) return;
+        query(event.lngLat);
+    });
     els.close.addEventListener('click', () => {
         els.panel.hidden = true;
     });

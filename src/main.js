@@ -81,8 +81,11 @@ const STATUS_TEXT = {
 const HEADING_SOURCE_TEXT = {gps: 'GPS', compass: 'Kompass'};
 
 /**
- * Panels, die ein Klick ausserhalb schliesst (14.9.2026, Nutzer: „Klick
- * ausserhalb aller Menüs führt zum Schliessen dieses"). Wird von
+ * Panels, die ein Klick auf die Karte schliesst (14.9.2026, Nutzer: „Klick
+ * ausserhalb aller Menüs führt zum Schliessen dieses"; 15.9.2026 präzisiert:
+ * „nur über Handle schliessbar, aber Klick auf eine andere Kartenfläche
+ * schliesst" — ein Klick auf einen fremden Anfasser lässt ein offenes Menü
+ * jetzt also stehen, nur ein Klick auf die Karte selbst schliesst). Wird von
  * `buildLayerPanel()` und `main()` befüllt, ein einziger Listener in
  * `main()` wertet es aus — Reihenfolge egal, da erst beim tatsächlichen
  * Klick gelesen.
@@ -90,12 +93,11 @@ const HEADING_SOURCE_TEXT = {gps: 'GPS', compass: 'Kompass'};
 const AUSSEN_SCHLIESSBAR = [];
 
 /**
- * Verhindert, dass derselbe Klick, der gerade ein Panel aussenseitig
- * geschlossen hat, im selben Zug ein anderes öffnet — z.B. beim Klick auf
- * einen fremden Anfasser, während ein Panel offen steht (14.9.2026, Nutzer:
- * „Klick neben ein Menü darf nicht direkt ein neues öffnen, sondern nur das
- * bereits offene schliessen"). Wird beim Schliessen gesetzt, von jedem
- * Anfasser vor dem Öffnen geprüft, und nach jedem Klick zurückgesetzt.
+ * Verhindert, dass derselbe Kartenklick, der gerade ein Menü geschlossen
+ * hat, im selben Zug auch noch die Antippen-Info auslöst (siehe `createInfo`
+ * in info.js) — „zuerst schliessen, erst bei weiterem Klick etwas Neues"
+ * (15.9.2026, Nutzer). Wird beim Schliessen gesetzt, von `createInfo` vor
+ * der Abfrage geprüft, und nach jedem Klick zurückgesetzt.
  */
 let unterdrueckeOeffnen = false;
 
@@ -293,7 +295,6 @@ function buildLayerPanel(overlays, obstacles, radar) {
 
     els.layersToggle.addEventListener('click', () => {
         const open = els.layersPanel.hidden;
-        if (unterdrueckeOeffnen && open) return;
         els.layersPanel.hidden = !open;
         els.layersToggle.setAttribute('aria-expanded', String(open));
     });
@@ -557,7 +558,8 @@ async function main() {
     const markOverlayUnavailable = buildLayerPanel(overlays, obstacles, radar);
     // Antippen beantwortet „was gilt hier?" aus den Sachdaten der Layer.
     createInfo(map, {overlays, obstacles},
-        {panel: els.infoPanel, body: els.infoBody, close: els.infoClose});
+        {panel: els.infoPanel, body: els.infoBody, close: els.infoClose},
+        () => unterdrueckeOeffnen);
     createMeasure(map, maplibregl,
         {menu: els.measureMenu, panel: els.measurePanel, text: els.measureText, clear: els.measureClear});
     /*
@@ -631,10 +633,7 @@ async function main() {
             toggle.title = offen ? nameZu : nameAuf;
         };
         setzen(false);
-        toggle.addEventListener('click', () => {
-            if (unterdrueckeOeffnen && panel.hidden) return;
-            setzen(panel.hidden);
-        });
+        toggle.addEventListener('click', () => setzen(panel.hidden));
         AUSSEN_SCHLIESSBAR.push({panel, toggle, schliessen: () => setzen(false)});
     }
 
@@ -935,26 +934,33 @@ async function main() {
     els.modeTracking.addEventListener('click', () => setMode(true));
     els.modeManual.addEventListener('click', () => setMode(false));
 
-    // Capture-Phase: greift auch, wenn ein innerer Klick-Handler die
-    // Ausbreitung stoppt. Der jeweilige Anfasser zählt nicht als „aussen" —
-    // sonst schlösse dieser Listener das Panel eine Zeile vor dem eigenen
-    // Toggle-Klick wieder, der es gerade erst geöffnet hat. Die Modi-Knöpfe
-    // zählen ebenfalls nicht: das Kamera-&-Schatten-Menü soll beim
-    // Moduswechsel offen bleiben (15.9.2026), sonst müsste man es nach jedem
-    // Umschalten neu aufklappen — genau das, was das Zusammenlegen ersparen
-    // sollte.
+    /*
+     * **Menüs schliessen nur über den eigenen Anfasser — ausser bei einem
+     * Klick auf die Karte selbst.** (15.9.2026, Nutzer: „mach das Klicken
+     * neben ein Menü zum Schliessen rückgängig … nur über Handle schliessbar,
+     * aber … Klick auf eine andere Kartenfläche schliesst"). Ein Klick auf
+     * einen anderen Knopf (z.B. einen fremden Anfasser) lässt ein offenes
+     * Menü also unangetastet stehen; nur die Karte selbst schliesst alle.
+     *
+     * Capture-Phase, damit auch ein Panel-interner Klick-Handler, der die
+     * Ausbreitung stoppt, nichts daran ändert.
+     */
     document.addEventListener('pointerdown', (event) => {
-        if (els.modes.contains(event.target)) return;
-        for (const {panel, toggle, schliessen} of AUSSEN_SCHLIESSBAR) {
+        if (!map.getContainer().contains(event.target)) return;
+        let geschlossen = false;
+        for (const {panel, schliessen} of AUSSEN_SCHLIESSBAR) {
             if (panel.hidden) continue;
-            if (panel.contains(event.target) || toggle.contains(event.target)) continue;
             schliessen();
-            unterdrueckeOeffnen = true;
+            geschlossen = true;
         }
+        // Dieser Klick hat gerade ein Menü geschlossen — er soll nicht im
+        // selben Zug auch noch die Antippen-Info der Karte auslösen (siehe
+        // `createInfo` in info.js).
+        if (geschlossen) unterdrueckeOeffnen = true;
     }, true);
     // Räumt die Unterdrückung nach dem Klick wieder auf, der sie ausgelöst
-    // hat — Bubble-Phase, läuft also erst nach dem eigenen Klick-Handler
-    // eines Anfassers.
+    // hat — Bubble-Phase, läuft also erst nach MapLibres eigener
+    // Klick-Verarbeitung (Listener direkt am Canvas, näher am Ziel).
     document.addEventListener('click', () => { unterdrueckeOeffnen = false; });
     /**
      * Datum separat vom Zeit-Regler, weil es selten geändert wird — nur die
