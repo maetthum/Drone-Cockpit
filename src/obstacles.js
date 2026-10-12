@@ -19,13 +19,31 @@ export const OBSTACLE_LAYER_IDS = [`${OBSTACLE_SOURCE_ID}-point`, `${OBSTACLE_SO
 
 const EMPTY = {type: 'FeatureCollection', features: []};
 
-/** WGS84 → EPSG:3857, für die BBOX der Abfrage. */
-function toMercator(lng, lat) {
+/** EPSG:3857 → WGS84. */
+function fromMercator([x, y]) {
     const R = 6378137;
     return [
-        R * (lng * Math.PI) / 180,
-        R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
+        (x / R) * (180 / Math.PI),
+        (2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * (180 / Math.PI)
     ];
+}
+
+/**
+ * Koordinaten in Längen-/Breitengrad bringen.
+ *
+ * Gerätebefund 12.10.2026: Hindernislinien erschienen nirgends — abgefragt
+ * wurde mit `sr=3857`, und api3 liefert die GeoJSON-Geometrie im angefragten
+ * Bezugssystem, also in Metern. MapLibre nimmt GeoJSON aber nur in WGS84; die
+ * Linien lagen weit ausserhalb jeder Karte. Abgefragt wird jetzt in WGS84 wie
+ * beim Antippen (info.js). Kämen trotzdem Meter zurück — erkennbar an Werten
+ * jenseits von ±180 —, werden sie hier zurückgerechnet.
+ */
+function toLngLat(coordinates) {
+    if (typeof coordinates[0] === 'number') {
+        const [x, y] = coordinates;
+        return Math.abs(x) > 180 || Math.abs(y) > 90 ? fromMercator(coordinates) : coordinates;
+    }
+    return coordinates.map(toLngLat);
 }
 
 /** Grobe Distanz in Metern — reicht, um „hat sich die Kamera bewegt?" zu beantworten. */
@@ -103,19 +121,22 @@ export function createObstacles(map) {
 
     async function load() {
         const bounds = map.getBounds();
-        const [minX, minY] = toMercator(bounds.getWest(), bounds.getSouth());
-        const [maxX, maxY] = toMercator(bounds.getEast(), bounds.getNorth());
-        const bbox = `${minX},${minY},${maxX},${maxY}`;
+        const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
         const url = `${OBSTACLES.identifyUrl}?geometryType=esriGeometryEnvelope&geometry=${bbox}`
             + `&mapExtent=${bbox}&imageDisplay=512,512,96&tolerance=0`
-            + `&layers=all:${OBSTACLES.layer}&sr=3857&geometryFormat=geojson&returnGeometry=true`
+            + `&layers=all:${OBSTACLES.layer}&sr=4326&geometryFormat=geojson&returnGeometry=true`
             + `&limit=${OBSTACLES.limit}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = await response.json();
         map.getSource(OBSTACLE_SOURCE_ID)?.setData({
             type: 'FeatureCollection',
-            features: (body.results ?? []).filter((feature) => feature.geometry)
+            features: (body.results ?? [])
+                .filter((feature) => feature.geometry?.coordinates)
+                .map((feature) => ({
+                    ...feature,
+                    geometry: {...feature.geometry, coordinates: toLngLat(feature.geometry.coordinates)}
+                }))
         });
     }
 

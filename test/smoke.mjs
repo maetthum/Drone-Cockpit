@@ -192,9 +192,11 @@ async function openPage({layerJsonStatus = 200, withSensorHarness = false, faili
         {type: 'Feature', id: 2, properties: {obstacletype: 'TRANSMISSION_LINE', maxheightagl: 25},
             geometry: {type: 'LineString', coordinates: [[7.905, 46.585], [7.915, 46.592]]}},
         // Seilbahn mit Höhe als Text: muss magenta erscheinen, nicht im
-        // schwarzen Rückfall einer gescheiterten Ausdrucksauswertung.
+        // schwarzen Rückfall einer gescheiterten Ausdrucksauswertung. Und in
+        // Web-Mercator-Metern (7.906/46.590 → 7.913/46.586), wie sie api3 bei
+        // `sr=3857` liefert — sie müssen in der Schweiz landen, nicht im Nirgendwo.
         {type: 'Feature', id: 3, properties: {obstacletype: 'CABLE_CAR', maxheightagl: '74.0'},
-            geometry: {type: 'LineString', coordinates: [[7.906, 46.590], [7.913, 46.586]]}}
+            geometry: {type: 'LineString', coordinates: [[880091.9, 5875406.5], [880871.1, 5874758.6]]}}
     ];
     // Zwei Verbraucher am selben Dienst: die Hindernisse fragen ein Rechteck ab,
     // die Antippen-Info einen Punkt. Ohne die Unterscheidung bekäme das
@@ -444,6 +446,8 @@ async function testObstacles() {
             before,
             after: window.cockpit.obstacles.isVisible(),
             colors,
+            cableStart: window.cockpit.map.querySourceFeatures('overlay-hindernisse')
+                .find((f) => f.properties.obstacletype === 'CABLE_CAR')?.geometry.coordinates[0],
             types: [...new Set(window.cockpit.map.querySourceFeatures('overlay-hindernisse')
                 .map((f) => f.geometry.type))].sort(),
             hasLayers: ['overlay-hindernisse-point', 'overlay-hindernisse-line']
@@ -459,6 +463,10 @@ async function testObstacles() {
     if (state.before !== true || state.after !== false) failures.push('Schalter greift nicht');
     if (!state.colors.CABLE_CAR?.startsWith('rgba(232,60,220')) {
         failures.push(`Seilbahn nicht magenta: ${JSON.stringify(state.colors)}`);
+    }
+    const [lng, lat] = state.cableStart ?? [];
+    if (!(Math.abs(lng - 7.906) < 0.001 && Math.abs(lat - 46.590) < 0.001)) {
+        failures.push(`Meter-Koordinaten nicht nach WGS84 umgerechnet: ${state.cableStart}`);
     }
     if (wmtsRequests.has('ch.bazl.luftfahrthindernis')) {
         failures.push('der gestempelte WMS-Rasterlayer wird wieder angefragt');
