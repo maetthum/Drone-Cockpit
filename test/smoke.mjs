@@ -190,7 +190,11 @@ async function openPage({layerJsonStatus = 200, withSensorHarness = false, faili
         {type: 'Feature', id: 1, properties: {obstacletype: 'CRANE', maxheightagl: 63.3},
             geometry: {type: 'Point', coordinates: [7.909, 46.588]}},
         {type: 'Feature', id: 2, properties: {obstacletype: 'TRANSMISSION_LINE', maxheightagl: 25},
-            geometry: {type: 'LineString', coordinates: [[7.905, 46.585], [7.915, 46.592]]}}
+            geometry: {type: 'LineString', coordinates: [[7.905, 46.585], [7.915, 46.592]]}},
+        // Seilbahn mit Höhe als Text: muss magenta erscheinen, nicht im
+        // schwarzen Rückfall einer gescheiterten Ausdrucksauswertung.
+        {type: 'Feature', id: 3, properties: {obstacletype: 'CABLE_CAR', maxheightagl: '74.0'},
+            geometry: {type: 'LineString', coordinates: [[7.906, 46.590], [7.913, 46.586]]}}
     ];
     // Zwei Verbraucher am selben Dienst: die Hindernisse fragen ein Rechteck ab,
     // die Antippen-Info einen Punkt. Ohne die Unterscheidung bekäme das
@@ -426,12 +430,20 @@ async function testObstacles() {
         window.__harness.emitFix({latitude: 46.588, longitude: 7.909, speed: 0});
         const loaded = await waitUntil(
             () => window.cockpit.map.querySourceFeatures('overlay-hindernisse').length > 0);
+        // Farbe je Feature direkt über den Stil-Ausdruck ausgewertet — gerendert
+        // wird im kopflosen Browser nicht verlässlich.
+        const lineColor = window.cockpit.map.style.getLayer('overlay-hindernisse-line').paint.get('line-color');
+        const colors = Object.fromEntries(window.cockpit.map.querySourceFeatures('overlay-hindernisse')
+            .filter((f) => f.geometry.type !== 'Point')
+            .map((f) => [f.properties.obstacletype,
+                lineColor.evaluate({type: 2, properties: f.properties}, {}).toString()]));
         const before = window.cockpit.obstacles.isVisible();
         window.cockpit.obstacles.setVisible(false);
         return {
             loaded,
             before,
             after: window.cockpit.obstacles.isVisible(),
+            colors,
             types: [...new Set(window.cockpit.map.querySourceFeatures('overlay-hindernisse')
                 .map((f) => f.geometry.type))].sort(),
             hasLayers: ['overlay-hindernisse-point', 'overlay-hindernisse-line']
@@ -445,6 +457,9 @@ async function testObstacles() {
     if (!state.hasLayers) failures.push('Punkt- oder Linienlayer fehlt');
     if (state.types.join() !== 'LineString,Point') failures.push(`Geometrietypen: ${state.types.join()}`);
     if (state.before !== true || state.after !== false) failures.push('Schalter greift nicht');
+    if (!state.colors.CABLE_CAR?.startsWith('rgba(232,60,220')) {
+        failures.push(`Seilbahn nicht magenta: ${JSON.stringify(state.colors)}`);
+    }
     if (wmtsRequests.has('ch.bazl.luftfahrthindernis')) {
         failures.push('der gestempelte WMS-Rasterlayer wird wieder angefragt');
     }

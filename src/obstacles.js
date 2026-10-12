@@ -41,9 +41,27 @@ function distanceMeters(a, b) {
  * eine zusätzliche externe Abhängigkeit für eine App, die ohne auskommt.
  */
 const HEIGHT_COLOR = [
-    'interpolate', ['linear'], ['coalesce', ['get', 'maxheightagl'], 0],
+    'interpolate', ['linear'],
+    // `to-number` statt blossem `get`: käme die Höhe als Text („74.0"),
+    // scheiterte `interpolate` zur Laufzeit, und MapLibre fiele still auf
+    // Schwarz zurück — auf dem Luftbild ein kaum sichtbarer dunkelgrauer Strich
+    // (im Test nachgestellt).
+    ['to-number', ['get', 'maxheightagl'], 0],
     0, '#ffd166', 40, '#f3722c', 100, '#d00000'
 ];
+
+/**
+ * Seilbahnen im Magenta des swisstopo-Seilbahnlayers statt nach Höhe.
+ *
+ * Gerätebefund 12.10.2026: eine Luftseilbahn (225ZH00042, 74 m über Grund)
+ * war nur als dunkelgrauer Strich zu sehen, während die übrigen Seilbahnen
+ * magenta erscheinen. Das Seil ist dasselbe Hindernis, ob die Bahn fährt oder
+ * nicht — es soll deshalb gleich aussehen wie jede andere Seilbahn, und zwar
+ * unabhängig davon, wie swisstopo sie im Raster darunter zeichnet. Die Höhe
+ * steht im Info-Panel.
+ */
+const CABLE_COLOR = '#e83cdc';
+const OBSTACLE_COLOR = ['match', ['get', 'obstacletype'], 'CABLE_CAR', CABLE_COLOR, HEIGHT_COLOR];
 
 /**
  * @param {import('maplibre-gl').Map} map
@@ -59,7 +77,7 @@ export function createObstacles(map) {
         layout: {visibility: OBSTACLES.enabled ? 'visible' : 'none'},
         paint: {
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 3, 17, 9],
-            'circle-color': HEIGHT_COLOR,
+            'circle-color': OBSTACLE_COLOR,
             'circle-opacity': 0.85,
             'circle-stroke-width': 1,
             'circle-stroke-color': '#1a0c00'
@@ -71,7 +89,12 @@ export function createObstacles(map) {
         source: OBSTACLE_SOURCE_ID,
         filter: ['!=', ['geometry-type'], 'Point'],
         layout: {visibility: OBSTACLES.enabled ? 'visible' : 'none', 'line-cap': 'round'},
-        paint: {'line-color': HEIGHT_COLOR, 'line-width': 2.5, 'line-opacity': 0.9}
+        paint: {
+            'line-color': OBSTACLE_COLOR,
+            // Seile etwas breiter: ein dünner Strich verschwindet über Wald.
+            'line-width': ['match', ['get', 'obstacletype'], 'CABLE_CAR', 3.5, 2.5],
+            'line-opacity': 0.9
+        }
     });
 
     let lastFetchAt = 0;
