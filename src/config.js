@@ -818,7 +818,7 @@ export const FOLLOW = {
      * zwei Drittel des Zitterns weg, echte Drehungen noch brauchbar.
      *
      * Die Trägheit ist vertretbar, weil der Kompass **nur im Stand und im
-     * Schritttempo** die Quelle ist; ab 2 km/h übernimmt der GPS-Kurs mit
+     * Schritttempo** die Quelle ist; ab 8 km/h übernimmt der GPS-Kurs mit
      * `headingTauSeconds` (0,2 s).
      */
     headingTauCompassSeconds: 0.5,
@@ -990,10 +990,19 @@ export const FOLLOW = {
      * GPS-Bewegungsvektor, unter `compassHeadingMaxSpeedMps` das Magnetometer,
      * dazwischen bleibt die bisherige Quelle stehen. Ohne diesen Totbereich
      * flattert die Quelle im Schritttempo hin und her.
-     * 2,0 km/h = 0,556 m/s (Schwelle aus der Spezifikation), 1,2 km/h = 0,333 m/s.
+     *
+     * **Von 2,0/1,2 auf 8/6 km/h angehoben (12.10.2026, Gerätebefund).** Beim
+     * Gehen (4,6 km/h, ±5 m) zeigte der Pfeil rund 35° neben die Gehrichtung:
+     * GPS-Kurs 306°, Kompass 343°, gegangen wurde der Kompasswert. Bei gut
+     * einem Meter je Fix und Metern Positionsfehler ist der GPS-Kurs im
+     * Schritttempo nicht brauchbar (siehe auch `headingTauGpsSlowSeconds`).
+     * Gehend zählt deshalb der Kompass — das Telefon zeigt dort ohnehin in
+     * Gehrichtung. Im Fahrzeug, wo der Kompass gestört ist, ist man fast
+     * immer schneller als 8 km/h.
+     * 8 km/h = 2,222 m/s, 6 km/h = 1,667 m/s.
      */
-    gpsHeadingMinSpeedMps: 0.556,
-    compassHeadingMaxSpeedMps: 0.333,
+    gpsHeadingMinSpeedMps: 2.222,
+    compassHeadingMaxSpeedMps: 1.667,
     /**
      * Nach einem Quellenwechsel wird die Blickrichtung kurz träger nachgeführt,
      * damit der Sprung zwischen Magnetometer- und GPS-Kurs nicht als Ruckler

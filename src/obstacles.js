@@ -19,13 +19,31 @@ export const OBSTACLE_LAYER_IDS = [`${OBSTACLE_SOURCE_ID}-point`, `${OBSTACLE_SO
 
 const EMPTY = {type: 'FeatureCollection', features: []};
 
-/** WGS84 → EPSG:3857, für die BBOX der Abfrage. */
-function toMercator(lng, lat) {
+/** EPSG:3857 → WGS84. */
+function fromMercator([x, y]) {
     const R = 6378137;
     return [
-        R * (lng * Math.PI) / 180,
-        R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
+        (x / R) * (180 / Math.PI),
+        (2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * (180 / Math.PI)
     ];
+}
+
+/**
+ * Koordinaten in Längen-/Breitengrad bringen.
+ *
+ * Gerätebefund 12.10.2026: Hindernislinien erschienen nirgends — abgefragt
+ * wurde mit `sr=3857`, und api3 liefert die GeoJSON-Geometrie im angefragten
+ * Bezugssystem, also in Metern. MapLibre nimmt GeoJSON aber nur in WGS84; die
+ * Linien lagen weit ausserhalb jeder Karte. Abgefragt wird jetzt in WGS84 wie
+ * beim Antippen (info.js). Kämen trotzdem Meter zurück — erkennbar an Werten
+ * jenseits von ±180 —, werden sie hier zurückgerechnet.
+ */
+function toLngLat(coordinates) {
+    if (typeof coordinates[0] === 'number') {
+        const [x, y] = coordinates;
+        return Math.abs(x) > 180 || Math.abs(y) > 90 ? fromMercator(coordinates) : coordinates;
+    }
+    return coordinates.map(toLngLat);
 }
 
 /** Grobe Distanz in Metern — reicht, um „hat sich die Kamera bewegt?" zu beantworten. */
@@ -41,9 +59,27 @@ function distanceMeters(a, b) {
  * eine zusätzliche externe Abhängigkeit für eine App, die ohne auskommt.
  */
 const HEIGHT_COLOR = [
-    'interpolate', ['linear'], ['coalesce', ['get', 'maxheightagl'], 0],
+    'interpolate', ['linear'],
+    // `to-number` statt blossem `get`: käme die Höhe als Text („74.0"),
+    // scheiterte `interpolate` zur Laufzeit, und MapLibre fiele still auf
+    // Schwarz zurück — auf dem Luftbild ein kaum sichtbarer dunkelgrauer Strich
+    // (im Test nachgestellt).
+    ['to-number', ['get', 'maxheightagl'], 0],
     0, '#ffd166', 40, '#f3722c', 100, '#d00000'
 ];
+
+/**
+ * Seilbahnen im Magenta des swisstopo-Seilbahnlayers statt nach Höhe.
+ *
+ * Gerätebefund 12.10.2026: eine Luftseilbahn (225ZH00042, 74 m über Grund)
+ * war nur als dunkelgrauer Strich zu sehen, während die übrigen Seilbahnen
+ * magenta erscheinen. Das Seil ist dasselbe Hindernis, ob die Bahn fährt oder
+ * nicht — es soll deshalb gleich aussehen wie jede andere Seilbahn, und zwar
+ * unabhängig davon, wie swisstopo sie im Raster darunter zeichnet. Die Höhe
+ * steht im Info-Panel.
+ */
+const CABLE_COLOR = '#e83cdc';
+const OBSTACLE_COLOR = ['match', ['get', 'obstacletype'], 'CABLE_CAR', CABLE_COLOR, HEIGHT_COLOR];
 
 /**
  * @param {import('maplibre-gl').Map} map
@@ -59,7 +95,7 @@ export function createObstacles(map) {
         layout: {visibility: OBSTACLES.enabled ? 'visible' : 'none'},
         paint: {
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 3, 17, 9],
-            'circle-color': HEIGHT_COLOR,
+            'circle-color': OBSTACLE_COLOR,
             'circle-opacity': 0.85,
             'circle-stroke-width': 1,
             'circle-stroke-color': '#1a0c00'
@@ -71,7 +107,12 @@ export function createObstacles(map) {
         source: OBSTACLE_SOURCE_ID,
         filter: ['!=', ['geometry-type'], 'Point'],
         layout: {visibility: OBSTACLES.enabled ? 'visible' : 'none', 'line-cap': 'round'},
-        paint: {'line-color': HEIGHT_COLOR, 'line-width': 2.5, 'line-opacity': 0.9}
+        paint: {
+            'line-color': OBSTACLE_COLOR,
+            // Seile etwas breiter: ein dünner Strich verschwindet über Wald.
+            'line-width': ['match', ['get', 'obstacletype'], 'CABLE_CAR', 3.5, 2.5],
+            'line-opacity': 0.9
+        }
     });
 
     let lastFetchAt = 0;
@@ -80,19 +121,22 @@ export function createObstacles(map) {
 
     async function load() {
         const bounds = map.getBounds();
-        const [minX, minY] = toMercator(bounds.getWest(), bounds.getSouth());
-        const [maxX, maxY] = toMercator(bounds.getEast(), bounds.getNorth());
-        const bbox = `${minX},${minY},${maxX},${maxY}`;
+        const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
         const url = `${OBSTACLES.identifyUrl}?geometryType=esriGeometryEnvelope&geometry=${bbox}`
             + `&mapExtent=${bbox}&imageDisplay=512,512,96&tolerance=0`
-            + `&layers=all:${OBSTACLES.layer}&sr=3857&geometryFormat=geojson&returnGeometry=true`
+            + `&layers=all:${OBSTACLES.layer}&sr=4326&geometryFormat=geojson&returnGeometry=true`
             + `&limit=${OBSTACLES.limit}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = await response.json();
         map.getSource(OBSTACLE_SOURCE_ID)?.setData({
             type: 'FeatureCollection',
-            features: (body.results ?? []).filter((feature) => feature.geometry)
+            features: (body.results ?? [])
+                .filter((feature) => feature.geometry?.coordinates)
+                .map((feature) => ({
+                    ...feature,
+                    geometry: {...feature.geometry, coordinates: toLngLat(feature.geometry.coordinates)}
+                }))
         });
     }
 
